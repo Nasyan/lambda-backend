@@ -23,6 +23,7 @@ from engine.ast import (
 from engine.exceptions.evaluator import (
     FormulaResolverRequiredError,
     FormulaTypeMismatchError,
+    FormulaRelationTargetMissingError,
 )
 from logs.decorators import trace_action
 
@@ -141,8 +142,19 @@ class FormulaEvaluator:
         target_record = await rr(target_val, lookup_field=lookup_field)
 
         if not target_record or "data" not in target_record:
-            logger.warning("target_record_not_found", target_val=target_val)
-            return 0
+            # Корень cost=0: связь ЗАДАНА (target_val не пуст, прошли проверку выше),
+            # но запись не нашлась. Раньше тут был `return 0` — молчаливая порча сумм.
+            # Теперь громкая ошибка: колонка получит NULL + лог, а не фальшивый 0.
+            logger.warning(
+                "target_record_not_found",
+                target_val=target_val,
+                relation_column=node.relation_column,
+            )
+            raise FormulaRelationTargetMissingError(
+                relation_column=node.relation_column,
+                target_val=target_val,
+                target_field=node.target_field,
+            )
 
         val = resolve_dot_notation(target_record["data"], node.target_field, default=0)
         logger.debug(
