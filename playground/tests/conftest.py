@@ -3,6 +3,8 @@
 import pytest
 from typing import Dict, Any, Callable, Tuple
 
+import pytest_asyncio
+
 
 @pytest.fixture
 def template_payload_factory() -> Callable[..., Dict[str, Any]]:
@@ -102,3 +104,400 @@ def create_test_trigger():
         return response.json()
 
     return _create
+
+
+@pytest_asyncio.fixture
+async def setup_crm_environment(test_client, create_test_environment):
+    """
+    Фикстура для развертывания базовой структуры CRM:
+    Создает шаблоны Клиенты, Товары и Заказы (с учетом дефолтных системных UUID
+    для lookup-связей и полей выбора типа select).
+    Возвращает контекст окружения и UUID созданных шаблонов.
+    """
+    user_uuid, instance_uuid, headers = await create_test_environment()
+    templates_url = f"/instances/{instance_uuid}/templates"
+
+    # 1. СОЗДАЕМ ШАБЛОН: КЛИЕНТЫ
+    clients_payload = {
+        "name": "Клиенты",
+        "schema": {
+            "uuid": {"type": "string", "required": False},
+            "name": {"type": "string", "required": False},
+            "phone": {"type": "string", "required": True, "unique": True},
+            "email": {"type": "string", "required": False},
+        },
+    }
+    clients_resp = await test_client.post(
+        templates_url, json=clients_payload, headers=headers
+    )
+    assert clients_resp.status_code == 201
+    clients_template_uuid = clients_resp.json()["_id"]
+
+    # 2. СОЗДАЕМ ШАБЛОН: ТОВАРЫ
+    products_payload = {
+        "name": "Товары",
+        "schema": {
+            "name": {"type": "string", "required": True},
+            "quantity_left": {"type": "number", "required": True},
+            "color": {"type": "string", "required": False},
+            "material": {"type": "string", "required": False},
+            "comm": {"type": "string", "required": False},
+            "cost": {"type": "number", "required": True},
+        },
+    }
+    products_resp = await test_client.post(
+        templates_url, json=products_payload, headers=headers
+    )
+    assert products_resp.status_code == 201
+    products_template_uuid = products_resp.json()["_id"]
+
+    # 3. СОЗДАЕМ ШАБЛОН: ЗАКАЗЫ (с привязкой к Товарам через скрытый/дефолтный uuid)
+    orders_payload = {
+        "name": "Заказы",
+        "schema": {
+            "uuid": {"type": "string", "required": False},
+            "product_list": {
+                "type": "relation_list",
+                "required": True,
+                "target_template_uuid": products_template_uuid,
+            },
+            "client_phone": {"type": "string", "required": False},
+            "client_name": {"type": "string", "required": False},
+            "adress": {"type": "string", "required": False},
+            "pickup": {"type": "boolean", "required": True},
+            "cost": {"type": "number", "required": True},
+            "source": {
+                "type": "select",
+                "options": ["сайт", "магазин физический", "инстаграм", "телеграм"],
+                "required": True,
+            },
+            "payment": {
+                "type": "select",
+                "options": ["картой", "наличкой"],
+                "required": True,
+            },
+            "real_cost": {"type": "number", "required": True},
+        },
+    }
+    orders_resp = await test_client.post(
+        templates_url, json=orders_payload, headers=headers
+    )
+    assert orders_resp.status_code == 201
+    orders_template_uuid = orders_resp.json()["_id"]
+
+    # Возвращаем словарь со всеми необходимыми данными для тестов
+    return {
+        "user_uuid": user_uuid,
+        "instance_uuid": instance_uuid,
+        "headers": headers,
+        "clients_template_uuid": clients_template_uuid,
+        "products_template_uuid": products_template_uuid,
+        "orders_template_uuid": orders_template_uuid,
+    }
+
+
+@pytest_asyncio.fixture
+async def setup_crm_environment_upgrade(test_client, create_test_environment):
+    """
+    Разворачивает базовую структуру CRM.
+    Поле 'cost' в Заказах теперь является динамической формулой (type: formula),
+    которая автоматически суммирует стоимость (cost) всех товаров из product_list.
+    """
+    user_uuid, instance_uuid, headers = await create_test_environment()
+    templates_url = f"/instances/{instance_uuid}/templates"
+
+    # 1. СОЗДАЕМ ШАБЛОН: КЛИЕНТЫ
+    clients_payload = {
+        "name": "Клиенты",
+        "schema": {
+            "uuid": {"type": "string", "required": False},
+            "name": {"type": "string", "required": False},
+            "phone": {"type": "string", "required": True, "unique": True},
+            "email": {"type": "string", "required": False},
+        },
+    }
+    clients_resp = await test_client.post(
+        templates_url, json=clients_payload, headers=headers
+    )
+    assert clients_resp.status_code == 201
+    clients_template_uuid = clients_resp.json()["_id"]
+
+    # 2. СОЗДАЕМ ШАБЛОН: ТОВАРЫ
+    products_payload = {
+        "name": "Товары",
+        "schema": {
+            "name": {"type": "string", "required": True},
+            "quantity_left": {"type": "number", "required": True},
+            "color": {"type": "string", "required": False},
+            "material": {"type": "string", "required": False},
+            "comm": {"type": "string", "required": False},
+            "cost": {"type": "number", "required": True},
+        },
+    }
+    products_resp = await test_client.post(
+        templates_url, json=products_payload, headers=headers
+    )
+    assert products_resp.status_code == 201
+    products_template_uuid = products_resp.json()["_id"]
+
+    # 3. СОЗДАЕМ ШАБЛОН: ЗАКАЗЫ (cost генерируется автоматически через AST)
+    orders_payload = {
+        "name": "Заказы",
+        "schema": {
+            "uuid": {"type": "string", "required": False},
+            "product_list": {
+                "type": "relation_list",
+                "required": True,
+                "target_template_uuid": products_template_uuid,
+            },
+            "client_phone": {"type": "string", "required": False},
+            "client_name": {"type": "string", "required": False},
+            "adress": {"type": "string", "required": False},
+            "pickup": {"type": "boolean", "required": True},
+            # ЭВОЛЮЦИЯ: Поле теперь вычисляемое
+            "cost": {
+                "type": "formula",
+                "required": False,
+                "ast": {
+                    "type": "array_reduce",
+                    "array_field": "product_list",
+                    "agg_function": "sum",
+                    "item_expression": {
+                        "type": "relation_field",
+                        "relation_column": "product_list",
+                        "lookup_field": "target_uuid",
+                        "target_field": "cost",
+                    },
+                },
+            },
+            "source": {
+                "type": "select",
+                "options": ["сайт", "магазин физический", "инстаграм", "телеграм"],
+                "required": True,
+            },
+            "payment": {
+                "type": "select",
+                "options": ["картой", "наличкой"],
+                "required": True,
+            },
+            "real_cost": {"type": "number", "required": True},
+        },
+    }
+    orders_resp = await test_client.post(
+        templates_url, json=orders_payload, headers=headers
+    )
+    assert orders_resp.status_code == 201
+    orders_template_uuid = orders_resp.json()["_id"]
+
+    return {
+        "user_uuid": user_uuid,
+        "instance_uuid": instance_uuid,
+        "headers": headers,
+        "clients_template_uuid": clients_template_uuid,
+        "products_template_uuid": products_template_uuid,
+        "orders_template_uuid": orders_template_uuid,
+    }
+
+
+@pytest_asyncio.fixture
+async def setup_crm_with_automation(test_client, setup_crm_environment):
+    """
+    Разворачивает базовую среду CRM и сразу регистрирует триггер AUTOMATION:
+    при создании Заказа автоматически делает mongo_upsert в таблицу Клиенты.
+    """
+    env = setup_crm_environment
+    instance_uuid = env["instance_uuid"]
+    headers = env["headers"]
+
+    clients_id = env["clients_template_uuid"]
+    orders_id = env["orders_template_uuid"]
+
+    # Конфигурируем триггер автоматического апсерта клиента
+    trigger_payload = {
+        "name": "Авто-создание клиента при заказе",
+        "trigger_type": "AUTOMATION",
+        "event_type": "ON_RECORD_CREATE",
+        "target_template_uuid": orders_id,
+        "action_name": "mongo_upsert",
+        "action_params": {
+            "target_template_uuid": clients_id,
+            "search_fields": ["phone"],
+            "payload": {
+                "phone": "{{data.client_phone}}",
+                "name": "{{data.client_name}}",
+            },
+        },
+        "ast": {
+            "type": "binary_op",
+            "operator": "gt",
+            "left": {"type": "field", "value": "client_phone"},
+            "right": {"type": "literal", "value": ""},
+        },
+    }
+
+    create_trigger_url = f"/instances/{instance_uuid}/triggers/"
+    trigger_resp = await test_client.post(
+        create_trigger_url, json=trigger_payload, headers=headers
+    )
+    assert trigger_resp.status_code in [200, 201]
+
+    # Возвращаем обогащенный контекст
+    return env
+
+
+@pytest_asyncio.fixture
+async def setup_crm_with_automation_upgrade(test_client, setup_crm_environment_upgrade):
+    """
+    Разворачивает базовую среду CRM и сразу регистрирует триггер AUTOMATION:
+    при создании Заказа автоматически делает mongo_upsert в таблицу Клиенты.
+    """
+    env = setup_crm_environment_upgrade
+    instance_uuid = env["instance_uuid"]
+    headers = env["headers"]
+
+    clients_id = env["clients_template_uuid"]
+    orders_id = env["orders_template_uuid"]
+
+    # Конфигурируем триггер автоматического апсерта клиента
+    trigger_payload = {
+        "name": "Авто-создание клиента при заказе",
+        "trigger_type": "AUTOMATION",
+        "event_type": "ON_RECORD_CREATE",
+        "target_template_uuid": orders_id,
+        "action_name": "mongo_upsert",
+        "action_params": {
+            "target_template_uuid": clients_id,
+            "search_fields": ["phone"],
+            "payload": {
+                "phone": "{{data.client_phone}}",
+                "name": "{{data.client_name}}",
+            },
+        },
+        "ast": {
+            "type": "binary_op",
+            "operator": "gt",
+            "left": {"type": "field", "value": "client_phone"},
+            "right": {"type": "literal", "value": ""},
+        },
+    }
+
+    create_trigger_url = f"/instances/{instance_uuid}/triggers/"
+    trigger_resp = await test_client.post(
+        create_trigger_url, json=trigger_payload, headers=headers
+    )
+    assert trigger_resp.status_code in [200, 201]
+
+    # Возвращаем обогащенный контекст
+    return env
+
+
+@pytest_asyncio.fixture
+async def setup_crm_dynamic_cost_and_trigger(test_client, create_test_environment):
+    """
+    Разворачивает CRM:
+    1. Поле 'cost' в Заказах — динамическая формула (array_reduce), считающая сумму товаров.
+    2. Триггер AUTOMATION (ON_RECORD_CREATE) — делает mongo_upsert клиента по номеру телефона.
+    """
+    user_uuid, instance_uuid, headers = await create_test_environment()
+    templates_url = f"/instances/{instance_uuid}/templates"
+
+    # 1. ШАБЛОН: КЛИЕНТЫ
+    clients_payload = {
+        "name": "Клиенты",
+        "schema": {
+            "name": {"type": "string", "required": False},
+            "phone": {"type": "string", "required": True, "unique": True},
+        },
+    }
+    clients_resp = await test_client.post(
+        templates_url, json=clients_payload, headers=headers
+    )
+    clients_template_uuid = clients_resp.json()["_id"]
+
+    # 2. ШАБЛОН: ТОВАРЫ
+    products_payload = {
+        "name": "Товары",
+        "schema": {
+            "name": {"type": "string", "required": True},
+            "quantity_left": {"type": "number", "required": True},
+            "cost": {"type": "number", "required": True},
+        },
+    }
+    products_resp = await test_client.post(
+        templates_url, json=products_payload, headers=headers
+    )
+    products_template_uuid = products_resp.json()["_id"]
+
+    # 3. ШАБЛОН: ЗАКАЗЫ (с авто-вычислением cost)
+    orders_payload = {
+        "name": "Заказы",
+        "schema": {
+            "product_list": {
+                "type": "relation_list",
+                "required": True,
+                "target_template_uuid": products_template_uuid,
+            },
+            "client_phone": {"type": "string", "required": False},
+            "client_name": {"type": "string", "required": False},
+            "pickup": {"type": "boolean", "required": True},
+            "cost": {
+                "type": "formula",
+                "required": False,
+                "ast": {
+                    "type": "array_reduce",
+                    "array_field": "product_list",
+                    "agg_function": "sum",
+                    "item_expression": {
+                        "type": "relation_field",
+                        "relation_column": "product_list",
+                        "lookup_field": "target_uuid",
+                        "target_field": "cost",
+                    },
+                },
+            },
+            "source": {
+                "type": "select",
+                "options": ["сайт", "инстаграм"],
+                "required": True,
+            },
+            "real_cost": {"type": "number", "required": True},
+        },
+    }
+    orders_resp = await test_client.post(
+        templates_url, json=orders_payload, headers=headers
+    )
+    orders_template_uuid = orders_resp.json()["_id"]
+
+    # 4. ТРИГГЕР: АВТО-UPSERT КЛИЕНТА
+    trigger_payload = {
+        "name": "Авто-создание клиента при заказе",
+        "trigger_type": "AUTOMATION",
+        "event_type": "ON_RECORD_CREATE",
+        "target_template_uuid": orders_template_uuid,
+        "action_name": "mongo_upsert",
+        "action_params": {
+            "target_template_uuid": clients_template_uuid,
+            "search_fields": ["phone"],
+            "payload": {
+                "phone": "{{data.client_phone}}",
+                "name": "{{data.client_name}}",
+            },
+        },
+        "ast": {
+            "type": "binary_op",
+            "operator": "gt",
+            "left": {"type": "field", "value": "client_phone"},
+            "right": {"type": "literal", "value": ""},
+        },
+    }
+    await test_client.post(
+        f"/instances/{instance_uuid}/triggers/", json=trigger_payload, headers=headers
+    )
+
+    return {
+        "instance_uuid": instance_uuid,
+        "headers": headers,
+        "clients_template_uuid": clients_template_uuid,
+        "products_template_uuid": products_template_uuid,
+        "orders_template_uuid": orders_template_uuid,
+    }

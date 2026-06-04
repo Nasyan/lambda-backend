@@ -1,2 +1,1 @@
 # jsonwebtoken/schemas.py
-

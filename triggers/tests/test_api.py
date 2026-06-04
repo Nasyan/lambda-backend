@@ -90,26 +90,25 @@ class TestTriggersArchitecture:
 
 
 class TestOrderToClientAutomation:
-
     @pytest.mark.asyncio
     async def test_order_creation_triggers_client_upsert(
-        self, test_client, create_test_environment
+        self, test_client, crm_template_factory
     ):
-        user_uuid, instance_uuid, headers = await create_test_environment()
-
-        # 1. СОЗДАЕМ ШАБЛОНЫ
-        clients_resp = await test_client.post(
-            f"/instances/{instance_uuid}/templates",
-            json={
-                "name": "Clients",
-                "schema": {"name": {"type": "string"}, "phone": {"type": "string"}},
-            },
-            headers=headers,
+        """
+        Проверка работы триггера ON_RECORD_CREATE с экшеном mongo_upsert:
+        создание связанных сущностей без дублирования на основе ключевого поля (phone).
+        """
+        # 1. Создаем шаблоны Clients и Orders через фабрику (используем общий instance_uuid)
+        tpl_clients = await crm_template_factory(
+            name="Clients",
+            schema={"name": {"type": "string"}, "phone": {"type": "string"}},
         )
-        clients_template_uuid = clients_resp.json()["_id"]
+        instance_uuid = tpl_clients["instance_uuid"]
+        headers = tpl_clients["headers"]
 
-        orders_resp = await test_client.post(
+        tpl_orders = await test_client.post(
             f"/instances/{instance_uuid}/templates",
+            headers=headers,
             json={
                 "name": "Orders",
                 "schema": {
@@ -117,11 +116,10 @@ class TestOrderToClientAutomation:
                     "client_phone": {"type": "string"},
                 },
             },
-            headers=headers,
         )
-        orders_template_uuid = orders_resp.json()["_id"]
+        orders_template_uuid = tpl_orders.json()["_id"]
 
-        # 2. СОЗДАЕМ ТРИГГЕР С ВАЛИДНЫМ AST
+        # 2. Создаем триггер сквозного upsert-сохранения
         trigger_payload = {
             "name": "Авто-UPSERT клиента",
             "trigger_type": "AUTOMATION",
@@ -135,7 +133,7 @@ class TestOrderToClientAutomation:
                 "right": {"type": "literal", "value": 1},
             },
             "action_params": {
-                "target_template_uuid": clients_template_uuid,
+                "target_template_uuid": tpl_clients["template_uuid"],
                 "search_fields": ["phone"],
                 "payload": {
                     "phone": "{{data.client_phone}}",
@@ -143,130 +141,79 @@ class TestOrderToClientAutomation:
                 },
             },
         }
-
         trigger_resp = await test_client.post(
             f"/instances/{instance_uuid}/triggers/",
             json=trigger_payload,
             headers=headers,
         )
-        assert (
-            trigger_resp.status_code == 201
-        ), f"Trigger creation failed: {trigger_resp.text}"
+        assert trigger_resp.status_code == 201
 
-        # 3. СОЗДАЕМ ДВА ЗАКАЗА (с одинаковым телефоном, чтобы сработал UPSERT)
+        # 3. Генерируем два последовательных заказа с одинаковым телефоном, но разным именем
         for name in ["Иван", "Иван Обновленный"]:
             await test_client.post(
                 f"/instances/{instance_uuid}/templates/{orders_template_uuid}/notes",
-                json={"data": {"client_name": name, "client_phone": "+79990000000"}},
                 headers=headers,
+                json={"data": {"client_name": name, "client_phone": "+79990000000"}},
             )
 
-        # 4. ПРОВЕРЯЕМ РЕЗУЛЬТАТ (С учетом пагинации)
+        # 4. Проверяем пагинированный список клиентов: документ должен остаться один с обновленным именем
         get_clients_resp = await test_client.get(
-            f"/instances/{instance_uuid}/templates/{clients_template_uuid}/notes",
-            headers=headers,
+            tpl_clients["base_url"], headers=headers
         )
         assert get_clients_resp.status_code == 200
 
-        # Разворачиваем пагинированный ответ c метаданными
         response_data = get_clients_resp.json()
-        assert (
-            response_data["total"] == 1
-        )  # Счетчик в метаданных показывает ровно 1 документ
-
-        # Извлекаем список результатов
-        clients_results = response_data["results"]
-
-        assert (
-            len(clients_results) == 1
-        ), f"Expected 1 client in results list, found {len(clients_results)}. Data: {response_data}"
-
-        # Проверяем, что первый клиент успешно обновился вторым заказом
-        assert clients_results[0]["data"]["name"] == "Иван Обновленный"
+        assert response_data["total"] == 1
+        assert response_data["results"][0]["data"]["name"] == "Иван Обновленный"
 
 
 class TestTriggerIntegrityWork:
     @pytest.mark.asyncio
     async def test_runtime_formula_error_handling(
-        self, test_client, create_test_environment
+        self, test_client, crm_template_factory
     ):
-        """Тест 4: Обработка ошибок рантайма при вычислении (/evaluate)."""
-        user_uuid, instance_uuid, headers = await create_test_environment()
-
-        # ШАГ 0: Создаем реальную таблицу
-        template_payload = {
-            "name": "Таблица с метриками",
-            "schema_definition": {
-                "total_score": {
-                    "type": "number"
-                }  # <-- Правильный плоский формат без "columns"
-            },
-        }
-        tpl_resp = await test_client.post(
-            f"/instances/{instance_uuid}/templates",
-            json=template_payload,
-            headers=headers,
+        """
+        Проверка падения вычисления выражения на лету (/evaluate) при невалидных типах в AST рантайме.
+        """
+        # 1. Создаем реальную таблицу с плоским описанием схемы через фабрику
+        tpl = await crm_template_factory(
+            name="Таблица с метриками", flat_schema={"total_score": {"type": "number"}}
+        )
+        instance_uuid, template_uuid, headers = (
+            tpl["instance_uuid"],
+            tpl["template_uuid"],
+            tpl["headers"],
         )
 
-        # Если здесь не 201, выведем ошибку в консоль
-        if tpl_resp.status_code != 201:
-            print(
-                f"\nОшибка создания шаблона: {tpl_resp.status_code} - {tpl_resp.text}"
-            )
-        assert tpl_resp.status_code == 201
-
-        tpl_data = tpl_resp.json()
-        # Проверяем все возможные варианты ключа ID таблицы (после нормализации это обычно "id" или "uuid")
-        target_template_uuid = (
-            tpl_data.get("id") or tpl_data.get("uuid") or tpl_data.get("_id")
-        )
-
-        # Формируем AST
-        invalid_types_ast = {
-            "type": "binary_op",
-            "operator": "multiply",
-            "left": {"type": "field", "value": "total_score"},
-            "right": {
-                "type": "literal",
-                "value": "не_число_а_строка",
-            },
-        }
-
-        payload = {
+        # 2. Создаем триггер LIVE_EVAL с заведомо конфликтующим AST (умножение числового поля на строку)
+        trigger_payload = {
             "name": "Тест ошибки типов в рантайме",
             "trigger_type": "LIVE_EVAL",
-            "ast": invalid_types_ast,
-            "target_template_uuid": str(target_template_uuid),
+            "target_template_uuid": str(template_uuid),
+            "ast": {
+                "type": "binary_op",
+                "operator": "multiply",
+                "left": {"type": "field", "value": "total_score"},
+                "right": {"type": "literal", "value": "не_число_а_строка"},
+            },
         }
-
         create_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/", json=payload, headers=headers
-        )
-
-        # Если создание триггера упало, мы увидим валидационный список ошибок FastAPI
-        if create_resp.status_code != 201:
-            print(
-                f"\nОшибка создания триггера: {create_resp.status_code} - {create_resp.text}"
-            )
-
-        assert create_resp.status_code == 201
-
-        resp_json = create_resp.json()
-        trigger_uuid = (
-            resp_json.get("id") or resp_json.get("_id") or resp_json.get("uuid")
-        )
-
-        # Вызываем летучее вычисление
-        evaluate_payload = {"context_data": {"total_score": 100}}
-        eval_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/{trigger_uuid}/evaluate",
-            json=evaluate_payload,
+            f"/instances/{instance_uuid}/triggers/",
+            json=trigger_payload,
             headers=headers,
         )
+        assert create_resp.status_code == 201
 
+        trigger_uuid = create_resp.json().get("id") or create_resp.json().get("_id")
+
+        # 3. Вызываем летучий расчет триггера по контексту и ловим ошибку типов
+        eval_resp = await test_client.post(
+            f"/instances/{instance_uuid}/triggers/{trigger_uuid}/evaluate",
+            json={"context_data": {"total_score": 100}},
+            headers=headers,
+        )
         assert eval_resp.status_code == 422
-        resp_data = eval_resp.json()
-        assert "message" in resp_data
+        assert "message" in eval_resp.json()
 
     @pytest.mark.asyncio
     async def test_cross_tenant_trigger_access_blocked(

@@ -21,24 +21,32 @@ class RecordResolverSession:
     async def __call__(
         self, record_val: Any, lookup_field: str = "_id"
     ) -> Dict[str, Any]:
-        # Вся внутренняя логика остается без изменений...
         if not record_val:
             return {}
 
+        # 🔥 Нормализация входных данных: защита от словарей/объектов
+        if isinstance(record_val, dict):
+            if lookup_field in record_val:
+                normalized_val = str(record_val[lookup_field])
+            else:
+                return {}  # Если передали объект без нужного ключа, искать нечего
+        else:
+            normalized_val = str(record_val)
+
         # 1. СТАНДАРТНЫЙ ПОИСК ПО СИСТЕМНОМУ UUID
         if lookup_field == "_id":
-            record_id_str = str(record_val)
-            if record_id_str not in self._cache:
-                fetched = await self.batch_fetch_func([record_id_str])
+            if normalized_val not in self._cache:
+                fetched = await self.batch_fetch_func([normalized_val])
                 self._cache.update(fetched)
-            return self._cache.get(record_id_str, {})
+            return self._cache.get(normalized_val, {})
 
+        # 2. ПОИСК ПО КАСТОМНОМУ ПОЛЮ (QR, SKU)
         else:
-            cache_key = f"{lookup_field}:{record_val}"
+            cache_key = f"{lookup_field}:{normalized_val}"
             if cache_key not in self._custom_cache:
                 if self.custom_lookup_func:
                     fetched_record = await self.custom_lookup_func(
-                        lookup_field, record_val
+                        lookup_field, normalized_val
                     )
                     self._custom_cache[cache_key] = fetched_record or {}
                 else:
@@ -47,8 +55,23 @@ class RecordResolverSession:
             return self._custom_cache.get(cache_key, {})
 
     @trace_action(name="Resolver::Batch_Prefetch")
-    async def prefetch(self, record_ids: List[str]) -> None:
-        missing_ids = [rid for rid in record_ids if rid not in self._cache]
+    async def prefetch(self, record_ids: List[Any]) -> None:
+        missing_ids = []
+
+        # 🔥 Дополнительная очистка на входе в prefetch
+        for rid in record_ids:
+            if not rid:
+                continue
+
+            val = None
+            if isinstance(rid, dict) and "_id" in rid:
+                val = str(rid["_id"])
+            elif isinstance(rid, str):
+                val = rid
+
+            if val and val not in self._cache:
+                missing_ids.append(val)
+
         if not missing_ids:
             return
 

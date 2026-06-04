@@ -1,2 +1,1 @@
 # minio/models.py
-

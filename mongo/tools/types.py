@@ -3,6 +3,7 @@
 import datetime
 import re
 from typing import Any, Dict
+from uuid import UUID
 from mongo.tools.exceptions import SchemaValidationError
 from engine.ast import parse_ast
 from engine.exceptions.evaluator import FormulaValidationError
@@ -258,10 +259,20 @@ class RelationListField(BaseFieldStrategy):
                 "Value for relation_list must be an array (list) of objects"
             )
 
-        mongo_repo = kwargs.get("mongo_repo")
+        record_repo = kwargs.get("record_repo") or kwargs.get("mongo_repo")
+        instance_uuid = kwargs.get("instance_uuid")
         target_template_uuid = field_meta["target_template_uuid"]
+        if not record_repo:
+            raise SchemaValidationError(
+                "Internal error: record repository is unavailable for relation_list validation"
+            )
+        if not instance_uuid:
+            raise SchemaValidationError(
+                "Internal error: instance_uuid is unavailable for relation_list validation"
+            )
 
         validated_list = []
+        target_uuids: set[str] = set()
         for idx, item in enumerate(value):
             if not isinstance(item, dict):
                 raise SchemaValidationError(
@@ -273,17 +284,35 @@ class RelationListField(BaseFieldStrategy):
                     f"Item at index {idx} is missing required key 'target_uuid'"
                 )
 
-            # Опциональная глубокая валидация: проверяем, существует ли запись в целевой таблице Mongo
-            if mongo_repo and hasattr(mongo_repo, "record_exists"):
-                exists = await mongo_repo.record_exists(
-                    target_template_uuid, item["target_uuid"]
+            target_uuid = item["target_uuid"]
+            if not isinstance(target_uuid, str):
+                raise SchemaValidationError(
+                    f"Item at index {idx} target_uuid must be a UUID string"
                 )
-                if not exists:
-                    raise SchemaValidationError(
-                        f"Linked record '{item['target_uuid']}' in template '{target_template_uuid}' not found"
-                    )
 
+            try:
+                UUID(target_uuid)
+            except ValueError as exc:
+                raise SchemaValidationError(
+                    f"Item at index {idx} target_uuid has invalid UUID format: '{target_uuid}'"
+                ) from exc
+
+            target_uuids.add(target_uuid)
             validated_list.append(item)
+
+        if target_uuids:
+            existing_records = await record_repo.get_records_by_uuids(
+                instance_uuid=str(instance_uuid),
+                record_uuids=list(target_uuids),
+                template_uuid=str(target_template_uuid),
+            )
+            existing_uuids = set(existing_records.keys())
+
+            if len(existing_uuids) != len(target_uuids):
+                missing_uuids = sorted(target_uuids - existing_uuids)
+                raise SchemaValidationError(
+                    f"Linked record(s) not found in template '{target_template_uuid}': {missing_uuids}"
+                )
 
         return validated_list
 

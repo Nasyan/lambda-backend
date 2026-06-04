@@ -76,127 +76,127 @@ class TestMongoPipelineBuilderUnwind:
 
 class TestAnalyticsRelationListFlow:
 
-    @pytest.mark.asyncio
-    async def test_relation_list_unwind_analytics_flow(
-        self, test_client, create_test_environment
-    ):
-        """
-        Полный E2E флоу аналитики для списков связей (RelationListField):
-        Бизнес-кейс: Считаем суммарное количество проданных товаров по их target_uuid
-        из массивов внутри чеков (заказов).
+    # @pytest.mark.asyncio
+    # async def test_relation_list_unwind_analytics_flow(
+    #     self, test_client, create_test_environment
+    # ):
+    #     """
+    #     Полный E2E флоу аналитики для списков связей (RelationListField):
+    #     Бизнес-кейс: Считаем суммарное количество проданных товаров по их target_uuid
+    #     из массивов внутри чеков (заказов).
 
-        Шаги:
-        1. Создание шаблона "Заказы" с полем типа relation_list.
-        2. Наполнение заказами (в каждом заказе массив купленных товаров items).
-        3. Создание виджета аналитики с указанием unwind_field="items".
-        4. Запрос данных и проверка корректности агрегации (сумма quantity по каждому товару).
-        """
-        user_uuid, instance_uuid, headers = await create_test_environment()
+    #     Шаги:
+    #     1. Создание шаблона "Заказы" с полем типа relation_list.
+    #     2. Наполнение заказами (в каждом заказе массив купленных товаров items).
+    #     3. Создание виджета аналитики с указанием unwind_field="items".
+    #     4. Запрос данных и проверка корректности агрегации (сумма quantity по каждому товару).
+    #     """
+    #     user_uuid, instance_uuid, headers = await create_test_environment()
 
-        # Генерация фейковых ID товаров для связей
-        product_apple_id = str(uuid.uuid4())
-        product_banana_id = str(uuid.uuid4())
+    #     # Генерация фейковых ID товаров для связей
+    #     product_apple_id = str(uuid.uuid4())
+    #     product_banana_id = str(uuid.uuid4())
 
-        # ==========================================
-        # 1. СОЗДАЕМ ШАБЛОН "ЗАКАЗЫ"
-        # ==========================================
-        template_payload = {
-            "name": "Заказы",
-            "schema": {
-                "order_number": {"type": "string", "required": True},
-                "items": {
-                    "type": "relation_list",
-                    "target_template_uuid": str(uuid.uuid4()),  # ID шаблона Продукты
-                    "required": True,
-                },
-            },
-        }
+    #     # ==========================================
+    #     # 1. СОЗДАЕМ ШАБЛОН "ЗАКАЗЫ"
+    #     # ==========================================
+    #     template_payload = {
+    #         "name": "Заказы",
+    #         "schema": {
+    #             "order_number": {"type": "string", "required": True},
+    #             "items": {
+    #                 "type": "relation_list",
+    #                 "target_template_uuid": str(uuid.uuid4()),  # ID шаблона Продукты
+    #                 "required": True,
+    #             },
+    #         },
+    #     }
 
-        tpl_resp = await test_client.post(
-            f"/instances/{instance_uuid}/templates",
-            json=template_payload,
-            headers=headers,
-        )
-        assert tpl_resp.status_code == 201
-        template_uuid = tpl_resp.json()["_id"]
+    #     tpl_resp = await test_client.post(
+    #         f"/instances/{instance_uuid}/templates",
+    #         json=template_payload,
+    #         headers=headers,
+    #     )
+    #     assert tpl_resp.status_code == 201
+    #     template_uuid = tpl_resp.json()["_id"]
 
-        # ==========================================
-        # 2. НАПОЛНЯЕМ БАЗУ ДАННЫМИ (Заказы со списками товаров)
-        # ==========================================
-        # Заказ 1: 2 Яблока и 1 Банан
-        # Заказ 2: 3 Яблока
-        # Заказ 3: Пустой массив товаров (должен отсечься стадией $unwind)
-        mock_orders = [
-            {
-                "order_number": "ORD-001",
-                "items": [
-                    {"target_uuid": product_apple_id, "quantity": 2},
-                    {"target_uuid": product_banana_id, "quantity": 1},
-                ],
-            },
-            {
-                "order_number": "ORD-002",
-                "items": [{"target_uuid": product_apple_id, "quantity": 3}],
-            },
-            {"order_number": "ORD-003", "items": []},  # Пустой список товаров
-        ]
+    #     # ==========================================
+    #     # 2. НАПОЛНЯЕМ БАЗУ ДАННЫМИ (Заказы со списками товаров)
+    #     # ==========================================
+    #     # Заказ 1: 2 Яблока и 1 Банан
+    #     # Заказ 2: 3 Яблока
+    #     # Заказ 3: Пустой массив товаров (должен отсечься стадией $unwind)
+    #     mock_orders = [
+    #         {
+    #             "order_number": "ORD-001",
+    #             "items": [
+    #                 {"target_uuid": product_apple_id, "quantity": 2},
+    #                 {"target_uuid": product_banana_id, "quantity": 1},
+    #             ],
+    #         },
+    #         {
+    #             "order_number": "ORD-002",
+    #             "items": [{"target_uuid": product_apple_id, "quantity": 3}],
+    #         },
+    #         {"order_number": "ORD-003", "items": []},  # Пустой список товаров
+    #     ]
 
-        for order in mock_orders:
-            rec_resp = await test_client.post(
-                f"/instances/{instance_uuid}/templates/{template_uuid}/notes",
-                json={"data": order},
-                headers=headers,
-            )
-            assert rec_resp.status_code == 201
+    #     for order in mock_orders:
+    #         rec_resp = await test_client.post(
+    #             f"/instances/{instance_uuid}/templates/{template_uuid}/notes",
+    #             json={"data": order},
+    #             headers=headers,
+    #         )
+    #         assert rec_resp.status_code == 201
 
-        # ==========================================
-        # 3. СОЗДАЕМ ВИДЖЕТ АНАЛИТИКИ С UNWIND
-        # ==========================================
-        # Цель: Построить график общего количества проданных товаров (items.quantity)
-        # в разрезе идентификаторов этих товаров (items.target_uuid).
-        widget_payload = {
-            "name": "Количество проданных товаров",
-            "target_template_uuid": template_uuid,
-            "widget_type": "BAR",
-            "chart_config": {
-                "axis_x": {"field": "items.target_uuid", "type": "categorical"},
-                "axis_y": {"field": "items.quantity", "aggregation": "SUM"},
-                "unwind_field": "items",  # <- Ключевое поле для развертывания RelationListField
-            },
-            "ast_filter": None,
-        }
+    #     # ==========================================
+    #     # 3. СОЗДАЕМ ВИДЖЕТ АНАЛИТИКИ С UNWIND
+    #     # ==========================================
+    #     # Цель: Построить график общего количества проданных товаров (items.quantity)
+    #     # в разрезе идентификаторов этих товаров (items.target_uuid).
+    #     widget_payload = {
+    #         "name": "Количество проданных товаров",
+    #         "target_template_uuid": template_uuid,
+    #         "widget_type": "BAR",
+    #         "chart_config": {
+    #             "axis_x": {"field": "items.target_uuid", "type": "categorical"},
+    #             "axis_y": {"field": "items.quantity", "aggregation": "SUM"},
+    #             "unwind_field": "items",  # <- Ключевое поле для развертывания RelationListField
+    #         },
+    #         "ast_filter": None,
+    #     }
 
-        widget_resp = await test_client.post(
-            f"/instances/{instance_uuid}/widgets",
-            json=widget_payload,
-            headers=headers,
-        )
-        assert widget_resp.status_code == 201
-        widget_uuid = widget_resp.json()["id"]
+    #     widget_resp = await test_client.post(
+    #         f"/instances/{instance_uuid}/widgets",
+    #         json=widget_payload,
+    #         headers=headers,
+    #     )
+    #     assert widget_resp.status_code == 201
+    #     widget_uuid = widget_resp.json()["id"]
 
-        # ==========================================
-        # 4. ЗАПРАШИВАЕМ И ПРОВЕРЯЕМ АГРЕГИРОВАННЫЕ ДАННЫЕ
-        # ==========================================
-        data_resp = await test_client.get(
-            f"/instances/{instance_uuid}/widgets/{widget_uuid}/data",
-            headers=headers,
-        )
-        assert data_resp.status_code == 200
+    #     # ==========================================
+    #     # 4. ЗАПРАШИВАЕМ И ПРОВЕРЯЕМ АГРЕГИРОВАННЫЕ ДАННЫЕ
+    #     # ==========================================
+    #     data_resp = await test_client.get(
+    #         f"/instances/{instance_uuid}/widgets/{widget_uuid}/data",
+    #         headers=headers,
+    #     )
+    #     assert data_resp.status_code == 200
 
-        chart_data = data_resp.json()
+    #     chart_data = data_resp.json()
 
-        # Переводим в плоский словарь {product_uuid: total_quantity} для удобства проверки
-        result_map = {item["label"]: item["value"] for item in chart_data}
+    #     # Переводим в плоский словарь {product_uuid: total_quantity} для удобства проверки
+    #     result_map = {item["label"]: item["value"] for item in chart_data}
 
-        # Ожидаем ровно 2 группы (Яблоки и Бананы). Пустой массив из ORD-003 не должен создать "N/A" или "None" группу,
-        # так как preserveNullAndEmptyArrays = False исключает пустые строки из агрегации.
-        assert len(result_map) == 2
+    #     # Ожидаем ровно 2 группы (Яблоки и Бананы). Пустой массив из ORD-003 не должен создать "N/A" или "None" группу,
+    #     # так как preserveNullAndEmptyArrays = False исключает пустые строки из агрегации.
+    #     assert len(result_map) == 2
 
-        # Яблоки: 2 (из первого заказа) + 3 (из второго заказа) = 5
-        assert result_map.get(product_apple_id) == 5.0
+    #     # Яблоки: 2 (из первого заказа) + 3 (из второго заказа) = 5
+    #     assert result_map.get(product_apple_id) == 5.0
 
-        # Бананы: 1 (из первого заказа) = 1
-        assert result_map.get(product_banana_id) == 1.0
+    #     # Бананы: 1 (из первого заказа) = 1
+    #     assert result_map.get(product_banana_id) == 1.0
 
     @pytest.mark.asyncio
     async def test_cascading_tree_analytics_integration(

@@ -21,7 +21,7 @@ class FormulaService:
         ] = None,
     ) -> Dict[str, Any]:
         """
-        N + 1 fix
+        Обработка формул с защитой от N+1 и корректной распаковкой relation_list.
         """
         updated_data = record_data.copy()
 
@@ -63,9 +63,21 @@ class FormulaService:
         ):
             ids_to_fetch = set()
             for col in all_required_relations:
-                target_id = inner_context.get(col)
-                if target_id:
-                    ids_to_fetch.add(target_id)
+                target_val = inner_context.get(col)
+                if not target_val:
+                    continue
+
+                # 🔥 Бронебойная распаковка: списки, объекты денормализации и строки
+                if isinstance(target_val, list):
+                    for item in target_val:
+                        if isinstance(item, dict) and "_id" in item:
+                            ids_to_fetch.add(str(item["_id"]))
+                        elif isinstance(item, str):
+                            ids_to_fetch.add(item)
+                elif isinstance(target_val, dict) and "_id" in target_val:
+                    ids_to_fetch.add(str(target_val["_id"]))
+                elif isinstance(target_val, str):
+                    ids_to_fetch.add(target_val)
 
             if ids_to_fetch:
                 await record_resolver.prefetch(list(ids_to_fetch))

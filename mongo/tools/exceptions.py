@@ -1,5 +1,6 @@
 # mongo/tools/exceptions.py
 
+
 class TemplateNotFoundError(Exception):
     """Вызывается, если шаблон не найден или принадлежит другому инстансу."""
 

@@ -94,19 +94,16 @@ class RecordService:
         str_instance = str(instance_uuid)
         str_template = str(template_uuid)
 
-        # 1. Получаем шаблон
         try:
             template = await self.template_repo.get_template_by_uuid(
                 str_instance,
                 str_template,
             )
         except TemplateNotFoundError:
-            # Передаем точные координаты упавшего шаблона
             raise TemplateNotFoundDomainError(
                 template_uuid=str_template, instance_uuid=str_instance
             )
 
-        # 2. ВЫЧИСЛЕНИЕ ФОРМУЛ НА УРОВНЕ СЕРВИСА
         session_resolver, aggregation_resolver = self._create_resolvers(str_instance)
 
         computed_data = await FormulaService.process_record_formulas(
@@ -116,7 +113,6 @@ class RecordService:
             aggregation_resolver=aggregation_resolver,
         )
 
-        # 3. СОХРАНЕНИЕ В БАЗУ
         try:
             inserted_record = await self.record_repo.create_record(
                 instance_uuid=str_instance,
