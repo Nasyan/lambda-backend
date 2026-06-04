@@ -1,9 +1,14 @@
 # mongo/tests/test_records.py
 
+from uuid import uuid4
+
 import pytest
 from mongo.template import TemplateRepository
 from mongo.record import RecordRepository
 from mongo.history import HistoryRepository
+from mongo.exceptions.record import RecordValidationError
+from mongo.tools.exceptions import SchemaValidationError
+from mongo.tools.types import RelationListField
 
 TEST_INSTANCE_ID = "company_a"
 TEST_USER_ID = "user_manager"
@@ -114,6 +119,47 @@ async def create_test_template(mongo_db, name: str = "Users") -> dict:
     )
 
 
+async def create_relation_list_test_setup(
+    mongo_db, count: int = 7
+) -> tuple[RecordRepository, list[dict], dict]:
+    record_repo = RecordRepository(mongo_db)
+    template_repo = TemplateRepository(mongo_db)
+
+    product_template = await create_test_template(mongo_db, name="Products")
+    product_records = []
+    for idx in range(count):
+        product_records.append(
+            await record_repo.create_record(
+                instance_uuid=TEST_INSTANCE_ID,
+                template_uuid=product_template["_id"],
+                data={
+                    "name": f"Product {idx}",
+                    "age": idx,
+                    "is_active": True,
+                },
+                schema=product_template["schema"],
+                user_uuid=TEST_USER_ID,
+            )
+        )
+
+    order_schema = {
+        "order_number": {"type": "string", "required": True},
+        "items": {
+            "type": "relation_list",
+            "target_template_uuid": product_template["_id"],
+            "required": True,
+        },
+    }
+    order_template = await template_repo.create_template(
+        instance_uuid=TEST_INSTANCE_ID,
+        name="Orders",
+        schema=order_schema,
+        user_uuid=TEST_USER_ID,
+    )
+
+    return record_repo, product_records, order_template
+
+
 @pytest.mark.asyncio
 async def test_create_record_success(mongo_db):
     record_repo = RecordRepository(mongo_db)
@@ -138,6 +184,81 @@ async def test_create_record_success(mongo_db):
     assert record["data"]["name"] == "Arseniy"
     assert record["data"]["age"] == 25
     assert record["instance_uuid"] == TEST_INSTANCE_ID
+
+
+@pytest.mark.asyncio
+async def test_relation_list_field_raises_schema_error_for_missing_reference(mongo_db):
+    record_repo, product_records, order_template = await create_relation_list_test_setup(
+        mongo_db
+    )
+    missing_uuid = str(uuid4())
+    relation_items = [
+        {"target_uuid": product["_id"], "qty": idx + 1}
+        for idx, product in enumerate(product_records)
+    ]
+    relation_items.insert(3, {"target_uuid": missing_uuid, "qty": 99})
+
+    with pytest.raises(SchemaValidationError) as exc_info:
+        await RelationListField.validate_data(
+            relation_items,
+            order_template["schema"]["items"],
+            instance_uuid=TEST_INSTANCE_ID,
+            record_repo=record_repo,
+        )
+
+    assert missing_uuid in str(exc_info.value)
+    assert "Linked record(s) not found" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_create_record_relation_list_rejects_missing_reference(mongo_db):
+    record_repo, product_records, order_template = await create_relation_list_test_setup(
+        mongo_db
+    )
+    missing_uuid = str(uuid4())
+    relation_items = [
+        {"target_uuid": product["_id"], "qty": idx + 1}
+        for idx, product in enumerate(product_records)
+    ]
+    relation_items.insert(3, {"target_uuid": missing_uuid, "qty": 99})
+
+    with pytest.raises(RecordValidationError) as exc_info:
+        await record_repo.create_record(
+            instance_uuid=TEST_INSTANCE_ID,
+            template_uuid=order_template["_id"],
+            data={"order_number": "ORD-404", "items": relation_items},
+            schema=order_template["schema"],
+            user_uuid=TEST_USER_ID,
+        )
+
+    assert missing_uuid in str(exc_info.value)
+    assert "Linked record(s) not found" in str(exc_info.value)
+    assert exc_info.value.details.get("reason") == "schema_validation_error"
+
+
+@pytest.mark.asyncio
+async def test_create_record_relation_list_accepts_valid_references(mongo_db):
+    record_repo, product_records, order_template = await create_relation_list_test_setup(
+        mongo_db
+    )
+    relation_items = [
+        {"target_uuid": product["_id"], "qty": idx + 1}
+        for idx, product in enumerate(product_records)
+    ]
+
+    record = await record_repo.create_record(
+        instance_uuid=TEST_INSTANCE_ID,
+        template_uuid=order_template["_id"],
+        data={"order_number": "ORD-200", "items": relation_items},
+        schema=order_template["schema"],
+        user_uuid=TEST_USER_ID,
+    )
+
+    assert record["_id"] is not None
+    assert len(record["data"]["items"]) == len(product_records)
+    assert {item["target_uuid"] for item in record["data"]["items"]} == {
+        product["_id"] for product in product_records
+    }
 
 
 @pytest.mark.asyncio

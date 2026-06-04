@@ -130,7 +130,11 @@ def validate_schema_definition(schema: Dict[str, Any]) -> None:
 
 
 async def validate_record_data(
-    data: Dict[str, Any], schema: Dict[str, Any], s3_service: Optional[Any] = None
+    data: Dict[str, Any],
+    schema: Dict[str, Any],
+    instance_uuid: str,
+    record_repo: Any,
+    s3_service: Optional[Any] = None,
 ) -> None:
     """Проверяет пользовательские данные на соответствие динамической схеме шаблона."""
     for field_name, field_meta in schema.items():
@@ -149,7 +153,11 @@ async def validate_record_data(
 
         try:
             validated_value = await strategy.validate_data(
-                value, field_meta, s3_service=s3_service
+                value,
+                field_meta,
+                s3_service=s3_service,
+                instance_uuid=instance_uuid,
+                record_repo=record_repo,
             )
         except SchemaValidationError as e:
             raise RecordValidationError(

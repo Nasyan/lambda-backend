@@ -135,7 +135,13 @@ class RecordRepository:
         validate_dict_keys(data)
 
         try:
-            await validate_record_data(data, schema, s3_service=s3_service)
+            await validate_record_data(
+                data,
+                schema,
+                instance_uuid=instance_uuid,
+                record_repo=self,
+                s3_service=s3_service,
+            )
         except Exception as e:
             raise RecordValidationError(
                 message=str(e), reason="schema_validation_error"
@@ -172,7 +178,13 @@ class RecordRepository:
         validate_dict_keys(new_data)
 
         try:
-            await validate_record_data(new_data, schema, s3_service=s3_service)
+            await validate_record_data(
+                new_data,
+                schema,
+                instance_uuid=instance_uuid,
+                record_repo=self,
+                s3_service=s3_service,
+            )
         except Exception as e:
             raise RecordValidationError(
                 message=str(e), reason="schema_validation_error"
@@ -310,7 +322,11 @@ class RecordRepository:
 
                 try:
                     await validate_record_data(
-                        isolated_data, target_schema, s3_service=s3_service
+                        isolated_data,
+                        target_schema,
+                        instance_uuid=instance_uuid,
+                        record_repo=self,
+                        s3_service=s3_service,
                     )
                 except Exception as e:
                     raise RecordValidationError(
@@ -329,12 +345,19 @@ class RecordRepository:
         self,
         instance_uuid: str,
         record_uuids: List[str],
+        template_uuid: Optional[str] = None,
     ) -> Dict[str, Dict[str, Any]]:
 
         if not record_uuids:
             return {}
 
-        query = {"instance_uuid": str(instance_uuid), "_id": {"$in": record_uuids}}
+        query = {
+            "instance_uuid": str(instance_uuid),
+            "_id": {"$in": [str(record_uuid) for record_uuid in record_uuids]},
+        }
+        if template_uuid is not None:
+            query["template_uuid"] = str(template_uuid)
+
         cursor = self.collection.find(query)
         result_map = {}
 
