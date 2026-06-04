@@ -134,3 +134,79 @@ def test_invalid_ast_structure():
     # содержащее 'operator' и 'input value is not a valid enumeration member'
     with pytest.raises(FormulaValidationError):
         parse_ast(raw_ast)
+
+
+# === Регрессия cost=0: array_reduce(sum) поверх relation_field ===
+# До фикта этот сценарий был полностью непокрыт тестами и молча схлопывался в 0.
+
+
+@pytest.mark.asyncio
+async def test_array_reduce_relation_field_sums_related_costs():
+    """array_reduce(sum) поверх relation_field должен суммировать cost из связанных
+    записей (150 + 350 = 500), а не возвращать 0."""
+    raw_ast = {
+        "type": "array_reduce",
+        "array_field": "items",
+        "agg_function": "sum",
+        "item_expression": {
+            "type": "relation_field",
+            "relation_column": "target_uuid",
+            "target_field": "cost",
+        },
+    }
+    ast_tree = parse_ast(raw_ast)
+    context = {"items": [{"target_uuid": "rec1"}, {"target_uuid": "rec2"}]}
+    related = {
+        "rec1": {"_id": "rec1", "data": {"cost": 150}},
+        "rec2": {"_id": "rec2", "data": {"cost": 350}},
+    }
+
+    async def resolver(target_val, lookup_field="_id"):
+        return related.get(str(target_val), {})
+
+    result = await FormulaEvaluator.evaluate(
+        ast_tree, context, record_resolver=resolver
+    )
+    assert result == 500
+
+
+@pytest.mark.asyncio
+async def test_relation_field_missing_target_raises_not_zero():
+    """Связь ЗАДАНА, но запись не найдена — раньше молча возвращался 0 (корень
+    cost=0). Теперь это громкая FormulaRelationTargetMissingError."""
+    from engine.exceptions.evaluator import FormulaRelationTargetMissingError
+
+    raw_ast = {
+        "type": "relation_field",
+        "relation_column": "target_uuid",
+        "target_field": "cost",
+    }
+    ast_tree = parse_ast(raw_ast)
+    context = {"target_uuid": "missing_rec"}
+
+    async def resolver(target_val, lookup_field="_id"):
+        return {}  # запись не найдена
+
+    with pytest.raises(FormulaRelationTargetMissingError):
+        await FormulaEvaluator.evaluate(ast_tree, context, record_resolver=resolver)
+
+
+@pytest.mark.asyncio
+async def test_relation_field_unset_relation_is_neutral_zero():
+    """Связь НЕ задана (relation_column отсутствует в контексте) — это «намеренно
+    пусто», корректно вернуть 0, а не ошибку."""
+    raw_ast = {
+        "type": "relation_field",
+        "relation_column": "target_uuid",
+        "target_field": "cost",
+    }
+    ast_tree = parse_ast(raw_ast)
+    context = {}  # target_uuid отсутствует -> связь не задана
+
+    async def resolver(target_val, lookup_field="_id"):
+        return {}
+
+    result = await FormulaEvaluator.evaluate(
+        ast_tree, context, record_resolver=resolver
+    )
+    assert result == 0

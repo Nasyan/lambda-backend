@@ -22,6 +22,29 @@ class FormulaEvaluationError(FormulaEngineException):
     error_code = "FORMULA_EVALUATION_ERROR"
 
 
+class FormulaRelationTargetMissingError(FormulaEvaluationError):
+    """Связь задана (relation_column не пуст), но резолвер не нашёл запись.
+
+    Раньше этот случай молча возвращал 0 и портил суммы/средние по связям —
+    это корень бага cost=0. Теперь падаем громко: вычисление колонки помечается
+    как ошибочное (NULL + лог), а не подставляется правдоподобный, но неверный 0.
+    """
+
+    error_code = "FORMULA_RELATION_TARGET_MISSING"
+
+    def __init__(self, relation_column: str, target_val: Any, target_field: str):
+        message = (
+            f"Связанная запись по '{relation_column}'={target_val} не найдена "
+            f"(target_field='{target_field}'). Нельзя молча вернуть 0."
+        )
+        details = {
+            "relation_column": relation_column,
+            "target_value": str(target_val)[:80],
+            "target_field": target_field,
+        }
+        super().__init__(message=message, details=details)
+
+
 class FormulaDateFormatError(FormulaEngineException):
     """Выбрасывается, когда переданное значение невозможно распарсить как ISO дату."""
 
