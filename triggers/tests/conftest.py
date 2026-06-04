@@ -1,0 +1,2 @@
+# triggers/tests/conftest.py
+

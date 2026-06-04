@@ -1,0 +1,19 @@
+__pycache__/
+.env
+.venv/
+.git
+.pytest_cache
+
+# IDE
+.idea/
+.vscode/
+
+# Alembic
+alembic/versions/*
+!alembic/versions/.gitkeep
+
+jwt-utils/certs/
+
+
+file_format.py
+manage.py

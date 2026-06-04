@@ -1,0 +1,23 @@
+[flake8]
+exclude =
+    .venv,
+    venv,
+    .git,
+    __pycache__,
+    .env,
+    .example,
+    alembic.ini,
+    README.md,
+    requirements.txt,
+    migrations,
+    */migrations/*,
+    alembic
+
+max-line-length = 88
+select = C,E,F,W,B,B950
+ignore = E203,E266,E501,W503,F403,F405
+
+per-file-ignores =
+    */migrations/*.py:F401,F403,F405
+    tests/*:F401,F403,F405
+    conftest.py:F401,F403,F405

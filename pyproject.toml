@@ -1,0 +1,23 @@
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.venv
+  | venv
+  | \.git
+  | __pycache__
+  | \.env
+  | \.example
+  | alembic.ini
+  | README\.md
+  | requirements\.txt
+  | migrations
+  | .*_migrations
+  | alembic
+)/
+'''
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

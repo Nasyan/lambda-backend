@@ -1,0 +1,1 @@
+# Здесь должен быть jsonwebtoken/certs/ в котором jwt-public.pem и jwt-private.pem
