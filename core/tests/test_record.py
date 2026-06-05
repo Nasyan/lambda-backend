@@ -134,13 +134,15 @@ class TestSchemaIntegrityProtection:
             "event_type": "ON_RECORD_UPDATE",
             "action_name": "test_action",
             "action_params": {"required_text": "Внимание"},
-            "ast": {
+            "source_template_uuid": template_uuid,
+            "target_template_uuid": template_uuid,
+            "condition_ast": {
                 "type": "binary_op",
                 "operator": "gt",
                 "left": {"type": "field", "value": "payment_amount"},
                 "right": {"type": "literal", "value": 50000},
             },
-            "target_template_uuid": template_uuid,
+            "payload_ast": {"type": "field", "value": "payment_amount"},
         }
         trigger_create_resp = await test_client.post(
             f"/instances/{instance_uuid}/triggers/",
