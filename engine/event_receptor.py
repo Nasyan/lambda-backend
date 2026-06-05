@@ -44,6 +44,7 @@ class EventReceptor:
         template_uuid: str,
         document: Dict[str, Any],
         manual_input: Optional[Any] = None,
+        previous_document: Optional[Dict[str, Any]] = None,
     ) -> TriggerEventContext:
         triggers = await self.get_subscribed_triggers(
             event_type=event_type,
@@ -67,6 +68,7 @@ class EventReceptor:
             instance_uuid=str(instance_uuid),
             variables=variables,
             source_schema=source_schema,
+            previous_document=previous_document,
         )
         return TriggerEventContext(
             event_type=event_type,

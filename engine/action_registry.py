@@ -138,8 +138,9 @@ class ActionDispatcher:
                     cascade_depth + 1,
                 )
 
+        status = "partial" if flush_result.get("failed_count") else "success"
         return {
-            "status": "success",
+            "status": status,
             "write_result": flush_result,
             "touched_records_count": len(touched_records),
         }

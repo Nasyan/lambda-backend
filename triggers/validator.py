@@ -49,7 +49,7 @@ class TriggerSchemaValidator:
         "multi_relation",
     }
 
-    COMPARISON_OPERATORS = {"gt", "lt", "eq"}
+    COMPARISON_OPERATORS = {"gt", "lt", "eq", "ne"}
     ARITHMETIC_OPERATORS = {"add", "subtract", "multiply", "divide"}
 
     async def validate(
@@ -331,6 +331,21 @@ class TriggerSchemaValidator:
         source_schema: Dict[str, Any],
         field: str,
     ) -> PayloadReturnType:
+        # $old/$new — state-tracking префиксы для UPDATE-событий (ГЗ-2 п.1):
+        # тип выводится по базовому полю схемы после префикса.
+        if field_name in ("$old", "$new"):
+            raise RecordValidationError(
+                field=field,
+                expected="$old.<field> or $new.<field> path",
+                got=field_name,
+                detail=(
+                    "Bare $old/$new is not allowed in typed expressions — "
+                    "reference a concrete field, e.g. $old.status."
+                ),
+            )
+        if field_name.startswith("$old.") or field_name.startswith("$new."):
+            field_name = field_name.split(".", 1)[1]
+
         base_field = field_name.split(".", 1)[0]
         field_meta = source_schema.get(base_field)
         if not field_meta:

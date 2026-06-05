@@ -214,3 +214,37 @@ Migration `20260605_0002_drop_legacy_trigger_ast.py`:
 - `RecordService` lets `SystemContractViolation` propagate after the record save; the persisted create/update is acceptable, and the 500 response signals an engine/config invariant breach that stage-2 validation should have prevented. Other automation exceptions keep the existing log-and-continue behavior.
 - Cascade is rejected when depth exceeds 5 (first rejected depth = 6).
 - All Mongo reads/writes include `instance_uuid`; DML writes also include `template_uuid`.
+
+## Hardening (task3, ГЗ-2 — 2026-06-06)
+
+### 1. Идемпотентность UPDATE: $old/$new state-tracking
+`EvaluationScope.previous_document` несёт снимок записи ДО изменения
+(прокидывается из `RecordService.update_existing_record` →
+`AutomationService.execute_automation_triggers(previous_record=...)` →
+`EventReceptor.capture`). В AST доступны `FieldNode`-пути `$old.<field>` и
+`$new.<field>` (валидатор выводит тип по базовому полю схемы; bare `$old`
+в типизированных выражениях запрещён — 422). Оператор `ne` добавлен в
+грамматику; `eq`/`ne` вычисляются и с None-операндами (на CREATE `$old.* is
+None`, поэтому условие «поле изменилось» работает на всех событиях).
+Идемпотентный паттерн: `AND(eq($new.payment,'картой'), ne($old.payment,$new.payment))`.
+
+### 2. Частичный отказ батча (BulkWriteError)
+`TargetAtomicWriter.flush()` ловит `BulkWriteError` (ordered=False): счётчики
+берутся из `exc.details` (nMatched/nModified/nUpserted/nInserted), упавшие
+индексы исключаются из touched-наборов — `fetch_touched_records()` и каскады
+видят ТОЛЬКО реально записанные документы. `flush()` возвращает
+`failed_count` + `write_errors[{index, code, errmsg}]`; `ActionDispatcher`
+отдаёт `status: "partial"` при частичном сбое.
+
+### 3. Защита от OOM и лимитов MongoDB
+- `BatchDataLoader.CHUNK_SIZE = 500`: `load()` и `get_by_field_many()` режут
+  `$in` на чанки ≤500 ID.
+- `AutomationService.process_cron_triggers`: вместо длинного открытого
+  курсора — пагинация по `_id` батчами `CRON_BATCH_SIZE = 500` (короткие
+  запросы, нет cursor-timeout, ограниченная память).
+
+### 4. Dirty-тесты
+`playground/tests/test_engine_hardening.py`: двойной PATCH (повторное
+списание исключено), partial bulk failure (2/3 записаны, каскад ровно по
+двум, duplicate-key code 11000), стресс DataLoader 10k ID по чанкам,
+юнит-семантика $old/$new включая CREATE.

@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 class AutomationService:
     MAX_CASCADE_DEPTH = 5
+    # Размер батча пагинации CRON-обхода записей (ГЗ-2 п.3)
+    CRON_BATCH_SIZE = 500
 
     @classmethod
     async def handle_event(
@@ -37,6 +39,7 @@ class AutomationService:
         document: Dict[str, Any],
         manual_input: Optional[Any] = None,
         cascade_depth: int = 0,
+        previous_document: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if cascade_depth > cls.MAX_CASCADE_DEPTH:
             raise AutomationExecutionError(
@@ -59,6 +62,7 @@ class AutomationService:
             template_uuid=str(template_uuid),
             document=document,
             manual_input=manual_input,
+            previous_document=previous_document,
         )
 
         results = []
@@ -234,9 +238,15 @@ class AutomationService:
         template_uuid: str,
         event_type: EventType,
         current_record: Dict[str, Any],
+        previous_record: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Ищет активные триггеры автоматизации в Postgres и последовательно выполняет их.
+
+        previous_record — снимок записи ДО изменения (для ON_RECORD_UPDATE):
+        даёт condition_ast доступ к $old.<field>/$new.<field> и позволяет
+        строить идемпотентные триггеры «поле изменилось», а не «поле равно»
+        (task3, ГЗ-2 п.1).
         """
         await cls.handle_event(
             pg_session=pg_session,
@@ -245,6 +255,7 @@ class AutomationService:
             template_uuid=template_uuid,
             event_type=event_type,
             document=current_record,
+            previous_document=previous_record,
         )
 
     @classmethod
@@ -311,68 +322,86 @@ class AutomationService:
             template_uuid_str = str(trigger.source_template_uuid)
             instance_uuid_str = str(trigger.instance_uuid)
 
-            # Оптимизация: Запрашиваем только нужные поля, если это возможно,
-            # но пока оставляем find для полной совместимости с контекстом
-            cursor = mongo_db["records"].find(
-                {"template_uuid": template_uuid_str, "instance_uuid": instance_uuid_str}
-            )
+            # Пакетная вычитка с пагинацией по _id (task3, ГЗ-2 п.3):
+            # длинный открытый курсор `async for record in cursor` на больших
+            # таблицах умирает по cursor timeout, а безлимитный to_list ведёт
+            # к OOM. Каждая итерация — отдельный короткий запрос на батч.
+            last_id = None
+            while True:
+                batch_query: Dict[str, Any] = {
+                    "template_uuid": template_uuid_str,
+                    "instance_uuid": instance_uuid_str,
+                }
+                if last_id is not None:
+                    batch_query["_id"] = {"$gt": last_id}
 
-            async for record in cursor:
-                # 🔥 ТОЧКА ИЗОЛЯЦИИ: Создаем SAVEPOINT или управляем commit/rollback поштучно
-                try:
-                    is_valid = await cls._evaluate_condition(
-                        trigger.name, trigger.condition_ast, record
-                    )
+                batch = (
+                    await mongo_db["records"]
+                    .find(batch_query)
+                    .sort("_id", 1)
+                    .limit(cls.CRON_BATCH_SIZE)
+                    .to_list(cls.CRON_BATCH_SIZE)
+                )
+                if not batch:
+                    break
+                last_id = batch[-1]["_id"]
 
-                    if not is_valid:
-                        continue
+                for record in batch:
+                    # 🔥 ТОЧКА ИЗОЛЯЦИИ: Создаем SAVEPOINT или управляем commit/rollback поштучно
+                    try:
+                        is_valid = await cls._evaluate_condition(
+                            trigger.name, trigger.condition_ast, record
+                        )
 
-                    await cls._run_trigger_pipeline(
-                        trigger=trigger,
-                        event_scope=EvaluationScope(
-                            document=record,
-                            instance_uuid=instance_uuid_str,
-                        ),
-                        data_loader=BatchDataLoader(
+                        if not is_valid:
+                            continue
+
+                        await cls._run_trigger_pipeline(
+                            trigger=trigger,
+                            event_scope=EvaluationScope(
+                                document=record,
+                                instance_uuid=instance_uuid_str,
+                            ),
+                            data_loader=BatchDataLoader(
+                                mongo_db=mongo_db,
+                                instance_uuid=instance_uuid_str,
+                            ),
                             mongo_db=mongo_db,
-                            instance_uuid=instance_uuid_str,
-                        ),
-                        mongo_db=mongo_db,
-                        pg_session=pg_session,
-                        cascade_depth=0,
-                        cascade_callback=None,
-                    )
+                            pg_session=pg_session,
+                            cascade_depth=0,
+                            cascade_callback=None,
+                        )
 
-                    # 🔥 ФИКС: Коммитим Postgres транзакцию строго для ТЕКУЩЕЙ успешной записи
-                    if hasattr(pg_session, "commit"):
-                        await pg_session.commit()
+                        # 🔥 ФИКС: Коммитим Postgres транзакцию строго для ТЕКУЩЕЙ успешной записи
+                        if hasattr(pg_session, "commit"):
+                            await pg_session.commit()
 
-                    logger.info(
-                        f"[CRON SUCCESS] Триггер '{trigger.name}' успешно обработал запись {record.get('_id')}"
-                    )
+                        logger.info(
+                            f"[CRON SUCCESS] Триггер '{trigger.name}' успешно обработал запись {record.get('_id')}"
+                        )
 
-                except SystemContractViolation as e:
-                    if hasattr(pg_session, "rollback"):
-                        await pg_session.rollback()
+                    except SystemContractViolation as e:
+                        if hasattr(pg_session, "rollback"):
+                            await pg_session.rollback()
 
-                    logger.error(
-                        f"[CRON CONTRACT ERROR] Системный контракт нарушен "
-                        f"в триггере '{trigger.name}': {str(e)}",
-                        exc_info=True,
-                    )
-                    raise
-                except Exception as e:
-                    # Если упала конкретная запись — откатываем только её операции в PG
-                    if hasattr(pg_session, "rollback"):
-                        await pg_session.rollback()
+                        logger.error(
+                            f"[CRON CONTRACT ERROR] Системный контракт нарушен "
+                            f"в триггере '{trigger.name}': {str(e)}",
+                            exc_info=True,
+                        )
+                        raise
+                    except Exception as e:
+                        # Если упала конкретная запись — откатываем только её операции в PG
+                        if hasattr(pg_session, "rollback"):
+                            await pg_session.rollback()
 
-                    logger.error(
-                        f"[CRON RECORD ERROR] Ошибка обработки записи {record.get('_id')} "
-                        f"в триггере '{trigger.name}': {str(e)}",
-                        exc_info=True,
-                    )
-                    # Проглатываем ошибку (continue), переходим к следующему документу таблицы!
-                    continue
+                        logger.error(
+                            f"[CRON RECORD ERROR] Ошибка обработки записи {record.get('_id')} "
+                            f"в триггере '{trigger.name}': {str(e)}",
+                            exc_info=True,
+                        )
+                        # Проглатываем ошибку (continue), переходим к следующему документу таблицы!
+                        continue
 
     @classmethod
     async def _ensure_session(cls, pg_session: Any) -> Any:

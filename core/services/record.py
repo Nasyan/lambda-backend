@@ -263,6 +263,7 @@ class RecordService:
                 template_uuid=str_template,
                 event_type=EventType.ON_RECORD_UPDATE,
                 current_record=updated_record,
+                previous_record=existing_record,
             )
         except SystemContractViolation:
             raise

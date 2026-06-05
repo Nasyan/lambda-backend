@@ -15,6 +15,7 @@ OPERATORS = {
     "gt": operator.gt,
     "lt": operator.lt,
     "eq": operator.eq,
+    "ne": operator.ne,
 }
 
 

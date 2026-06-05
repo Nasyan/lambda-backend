@@ -44,6 +44,11 @@ class EvaluationScope:
     current_item: Optional[Any] = None
     variables: Dict[str, Any] = field(default_factory=dict)
     source_schema: Dict[str, Any] = field(default_factory=dict)
+    # Снимок документа ДО обновления (события UPDATE). Доступен в AST через
+    # $old.<field>; текущее состояние — через $new.<field> (alias документа).
+    # Нужен для идемпотентности: condition_ast может проверять факт ИЗМЕНЕНИЯ
+    # поля, а не просто его значение (task3, ГЗ-2 п.1).
+    previous_document: Optional[Dict[str, Any]] = None
 
     def child_for_item(self, item: Any) -> "EvaluationScope":
         child_variables = {**self.variables, "current_item": item}
@@ -53,7 +58,19 @@ class EvaluationScope:
             current_item=item,
             variables=child_variables,
             source_schema=self.source_schema,
+            previous_document=self.previous_document,
         )
+
+    @staticmethod
+    def _document_context(document: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Плоский контекст одного документа: верхний уровень + data."""
+        context: Dict[str, Any] = {}
+        if isinstance(document, dict):
+            context.update(document)
+            data = document.get("data")
+            if isinstance(data, dict):
+                context.update(data)
+        return context
 
     def as_context(self) -> Dict[str, Any]:
         context: Dict[str, Any] = {}
@@ -114,6 +131,25 @@ class ASTEvaluator:
                 node.value,
                 default=0,
             )
+
+        # $old/$new — трекинг состояний для событий UPDATE (идемпотентность):
+        # $old.<field> читает снимок документа ДО изменения, $new.<field> —
+        # текущее состояние. На событиях без previous_document $old.* == None,
+        # поэтому условия вида ne($new.x, $old.x) корректно срабатывают и на CREATE.
+        if node.value == "$old":
+            return EvaluationScope._document_context(scope.previous_document)
+        if node.value.startswith("$old."):
+            old_context = EvaluationScope._document_context(scope.previous_document)
+            value = resolve_dot_notation(old_context, node.value[5:], default=None)
+            logger.debug("old_field_resolved", path=node.value, resolved_value=value)
+            return value
+        if node.value == "$new":
+            return EvaluationScope._document_context(scope.document)
+        if node.value.startswith("$new."):
+            new_context = EvaluationScope._document_context(scope.document)
+            value = resolve_dot_notation(new_context, node.value[5:], default=None)
+            logger.debug("new_field_resolved", path=node.value, resolved_value=value)
+            return value
 
         context = scope.as_context()
         value = resolve_dot_notation(context, node.value, default=0)
@@ -341,6 +377,13 @@ class ASTEvaluator:
     ) -> Any:
         left_value = await self.evaluate(node.left, scope)
         right_value = await self.evaluate(node.right, scope)
+
+        # eq/ne обязаны работать с None-операндами: $old.<field> на событии
+        # CREATE (или для ранее отсутствовавшего поля) равен None, и условие
+        # "поле изменилось" должно вычисляться, а не схлопываться в None.
+        if node.operator in ("eq", "ne"):
+            op_func = OPERATORS[node.operator]
+            return op_func(left_value, right_value)
 
         if left_value is None or right_value is None:
             return None
@@ -762,6 +805,9 @@ class FormulaEvaluator:
     async def _eval_binary_op(cls, node: BinaryOpNode, context, rr, ar):
         left_val = await cls._eval_node(node.left, context, rr, ar)
         right_val = await cls._eval_node(node.right, context, rr, ar)
+
+        if node.operator in ("eq", "ne"):
+            return OPERATORS[node.operator](left_val, right_val)
 
         if left_val is None or right_val is None:
             logger.debug(

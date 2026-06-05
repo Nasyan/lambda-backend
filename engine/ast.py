@@ -29,7 +29,7 @@ class RelationFieldNode(BaseModel):
 
 class BinaryOpNode(BaseModel):
     type: Literal["binary_op"] = "binary_op"
-    operator: Literal["add", "subtract", "multiply", "divide", "gt", "lt", "eq"]
+    operator: Literal["add", "subtract", "multiply", "divide", "gt", "lt", "eq", "ne"]
     left: "ASTNode"
     right: "ASTNode"
 

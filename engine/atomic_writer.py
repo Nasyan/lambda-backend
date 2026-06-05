@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import InsertOne, UpdateOne
+from pymongo.errors import BulkWriteError
 
 from mongo.tools.utils import stringify_id
 
@@ -24,6 +25,11 @@ class TargetAtomicWriter:
         self.target_template_uuid = str(target_template_uuid)
         self.collection = mongo_db["records"]
         self._operations: List[Any] = []
+        # Параллельный _operations список целей: ("id", record_uuid) либо
+        # ("filter", filter_doc). После flush() в touched-наборы попадают
+        # ТОЛЬКО реально записанные операции (ГЗ-2 п.2): упавшие в
+        # BulkWriteError документы не должны порождать каскады.
+        self._op_targets: List[tuple] = []
         self._touched_record_ids: Set[str] = set()
         self._touched_filters: List[Dict[str, Any]] = []
 
@@ -41,7 +47,7 @@ class TargetAtomicWriter:
             "updated_at": now,
         }
         self._operations.append(InsertOne(document))
-        self._touched_record_ids.add(record_uuid)
+        self._op_targets.append(("id", record_uuid))
         return record_uuid
 
     def add_update(
@@ -55,12 +61,13 @@ class TargetAtomicWriter:
             "instance_uuid": self.instance_uuid,
             "template_uuid": self.target_template_uuid,
         }
+        op_target: tuple
         if record_uuid:
             filter_doc["_id"] = str(record_uuid)
-            self._touched_record_ids.add(str(record_uuid))
+            op_target = ("id", str(record_uuid))
         elif search_filter:
             filter_doc.update(self._to_data_filter(search_filter))
-            self._touched_filters.append(dict(filter_doc))
+            op_target = ("filter", dict(filter_doc))
         else:
             raise ValueError("record_uuid or search_filter is required for update")
 
@@ -76,11 +83,18 @@ class TargetAtomicWriter:
                     "created_at": datetime.now(timezone.utc),
                 }
             )
-            self._touched_record_ids.add(upsert_record_uuid)
+            if op_target[0] == "filter":
+                # upsert по фильтру: успешная операция могла и обновить
+                # существующую запись (фильтр), и вставить новую (id) —
+                # отслеживаем обе цели.
+                op_target = ("filter_or_id", dict(op_target[1]), upsert_record_uuid)
+            else:
+                op_target = ("id", upsert_record_uuid)
 
         update_doc.setdefault("$set", {})["updated_at"] = datetime.now(timezone.utc)
         update_doc.setdefault("$inc", {})["version"] = 1
         self._operations.append(UpdateOne(filter_doc, update_doc, upsert=upsert))
+        self._op_targets.append(op_target)
 
     async def flush(self) -> Dict[str, Any]:
         if not self._operations:
@@ -89,16 +103,63 @@ class TargetAtomicWriter:
                 "modified_count": 0,
                 "upserted_count": 0,
                 "inserted_count": 0,
+                "failed_count": 0,
+                "write_errors": [],
             }
 
-        result = await self.collection.bulk_write(self._operations, ordered=False)
+        failed_indexes: Set[int] = set()
+        write_errors: List[Dict[str, Any]] = []
+
+        try:
+            result = await self.collection.bulk_write(self._operations, ordered=False)
+            counts = {
+                "matched_count": result.matched_count,
+                "modified_count": result.modified_count,
+                "upserted_count": result.upserted_count,
+                "inserted_count": result.inserted_count,
+            }
+        except BulkWriteError as exc:
+            # ordered=False: Mongo выполнил ВСЕ операции, часть упала.
+            # Частичный сбой не должен ронять пайплайн (ГЗ-2 п.2):
+            # фиксируем какие операции не записались, остальные считаем
+            # успешными, и только они попадут в touched/каскады.
+            details = exc.details or {}
+            for write_error in details.get("writeErrors", []):
+                index = write_error.get("index")
+                if index is not None:
+                    failed_indexes.add(int(index))
+                write_errors.append(
+                    {
+                        "index": index,
+                        "code": write_error.get("code"),
+                        "errmsg": write_error.get("errmsg"),
+                    }
+                )
+            counts = {
+                "matched_count": details.get("nMatched", 0),
+                "modified_count": details.get("nModified", 0),
+                "upserted_count": details.get("nUpserted", 0),
+                "inserted_count": details.get("nInserted", 0),
+            }
+
+        # Только реально записанные операции попадают в touched-наборы.
+        for index, op_target in enumerate(self._op_targets):
+            if index in failed_indexes:
+                continue
+            kind = op_target[0]
+            if kind == "id":
+                self._touched_record_ids.add(op_target[1])
+            elif kind == "filter":
+                self._touched_filters.append(op_target[1])
+            elif kind == "filter_or_id":
+                self._touched_filters.append(op_target[1])
+                self._touched_record_ids.add(op_target[2])
+
         self._operations = []
-        return {
-            "matched_count": result.matched_count,
-            "modified_count": result.modified_count,
-            "upserted_count": result.upserted_count,
-            "inserted_count": result.inserted_count,
-        }
+        self._op_targets = []
+        counts["failed_count"] = len(failed_indexes)
+        counts["write_errors"] = write_errors
+        return counts
 
     async def fetch_touched_records(self) -> List[Dict[str, Any]]:
         if not self._touched_record_ids and not self._touched_filters:

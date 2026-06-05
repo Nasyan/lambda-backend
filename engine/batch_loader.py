@@ -11,9 +11,13 @@ class BatchDataLoader:
     """
     Per-execution lazy Mongo loader with tenant-scoped cache.
 
-    IDs are collected first and loaded by template with one `$in` query per pending
-    group. Subsequent reads come from the in-memory session cache.
+    IDs are collected first and loaded by template in chunked `$in` queries
+    (max CHUNK_SIZE ids per query — защита от OOM и лимита размера BSON-запроса,
+    task3 ГЗ-2 п.3). Subsequent reads come from the in-memory session cache.
     """
+
+    # Максимум ID в одном операторе $in
+    CHUNK_SIZE = 500
 
     def __init__(self, mongo_db: AsyncIOMotorDatabase, instance_uuid: str):
         self.mongo_db = mongo_db
@@ -51,22 +55,26 @@ class BatchDataLoader:
                 continue
 
             cache_instance_uuid, template_uuid = cache_key
-            query: Dict[str, Any] = {
-                "instance_uuid": cache_instance_uuid,
-                "_id": {"$in": sorted(record_ids)},
-            }
-            if template_uuid is not None:
-                query["template_uuid"] = template_uuid
+            sorted_ids = sorted(record_ids)
 
-            cursor = self.collection.find(query)
-            async for record in cursor:
-                stringify_id(record)
-                record_cache_key = (
-                    cache_instance_uuid,
-                    template_uuid,
-                    str(record["_id"]),
-                )
-                self._records[record_cache_key] = record
+            for chunk_start in range(0, len(sorted_ids), self.CHUNK_SIZE):
+                chunk = sorted_ids[chunk_start : chunk_start + self.CHUNK_SIZE]
+                query: Dict[str, Any] = {
+                    "instance_uuid": cache_instance_uuid,
+                    "_id": {"$in": chunk},
+                }
+                if template_uuid is not None:
+                    query["template_uuid"] = template_uuid
+
+                cursor = self.collection.find(query)
+                async for record in cursor:
+                    stringify_id(record)
+                    record_cache_key = (
+                        cache_instance_uuid,
+                        template_uuid,
+                        str(record["_id"]),
+                    )
+                    self._records[record_cache_key] = record
 
             self._pending_ids[cache_key].clear()
 
@@ -127,23 +135,26 @@ class BatchDataLoader:
         if cache_key in self._field_cache:
             return self._field_cache[cache_key]
 
-        query: Dict[str, Any] = {
-            "instance_uuid": self.instance_uuid,
-            field_name: {"$in": list(normalized_values)},
-        }
-        if normalized_template_uuid is not None:
-            query["template_uuid"] = normalized_template_uuid
-
         result: Dict[Any, Dict[str, Any]] = {}
-        cursor = self.collection.find(query)
-        async for record in cursor:
-            stringify_id(record)
-            field_value = self._resolve_dotted(record, field_name)
-            if field_value is not None:
-                result[str(field_value)] = record
-                self._records[
-                    (self.instance_uuid, normalized_template_uuid, str(record["_id"]))
-                ] = record
+        values_list = list(normalized_values)
+        for chunk_start in range(0, len(values_list), self.CHUNK_SIZE):
+            chunk = values_list[chunk_start : chunk_start + self.CHUNK_SIZE]
+            query: Dict[str, Any] = {
+                "instance_uuid": self.instance_uuid,
+                field_name: {"$in": chunk},
+            }
+            if normalized_template_uuid is not None:
+                query["template_uuid"] = normalized_template_uuid
+
+            cursor = self.collection.find(query)
+            async for record in cursor:
+                stringify_id(record)
+                field_value = self._resolve_dotted(record, field_name)
+                if field_value is not None:
+                    result[str(field_value)] = record
+                    self._records[
+                        (self.instance_uuid, normalized_template_uuid, str(record["_id"]))
+                    ] = record
 
         self._field_cache[cache_key] = result
         return result
