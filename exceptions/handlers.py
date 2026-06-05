@@ -4,6 +4,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from exceptions.base import BaseAppException
+from store.exceptions import (
+    StorefrontTemplateNotFoundError,
+    StorefrontEmptyWritePayloadError,
+)
 
 from analytics.exceptions import (
     UnsupportedASTNodeError,
@@ -260,6 +264,8 @@ EXCEPTION_STATUS_MAPPING = {
     CreatorDeactivationDeniedError: status.HTTP_400_BAD_REQUEST,
     TargetUserAlreadyInactiveError: status.HTTP_400_BAD_REQUEST,
     InfrastructureStorageError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    StorefrontTemplateNotFoundError: status.HTTP_404_NOT_FOUND,
+    StorefrontEmptyWritePayloadError: status.HTTP_400_BAD_REQUEST,
 }
 
 

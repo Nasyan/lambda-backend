@@ -330,6 +330,16 @@ class TemplateService:
     ) -> Dict[str, Any]:
         return await self._get_template_or_raise(str(instance_uuid), str(template_uuid))
 
+    async def find_by_name(
+        self,
+        instance_uuid: UUID,
+        name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Точечный поиск шаблона по имени (O(1) запрос вместо обхода всех шаблонов)."""
+        return await self.template_repo.find_by_name(
+            instance_uuid=str(instance_uuid), name=name
+        )
+
     async def get_all_templates(
         self,
         instance_uuid: UUID,

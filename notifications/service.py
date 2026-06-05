@@ -4,10 +4,12 @@ from uuid import UUID
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
-from sqlalchemy.orm import selectinload
 from middleware.schemas import ListParameters
 from notifications.models import NotificationTemplate, NotificationInbox
+from notifications.repository import (
+    NotificationTemplateRepository,
+    NotificationInboxRepository,
+)
 from notifications.exceptions.dispatcher import NotificationNotFoundError
 from core.services.template_integrity import TemplateIntegrityService
 
@@ -49,7 +51,7 @@ class NotificationTemplateService:
             # Если в твоей модели Postgres маппинги хранятся под другим именем,
             # замапь его сюда, например: extra_config=payload_data.get("entity_mappings")
         )
-        db.add(template)
+        NotificationTemplateRepository(db).add(template)
         await db.commit()
         return new_uuid
 
@@ -57,37 +59,16 @@ class NotificationTemplateService:
     async def get_templates(
         db: AsyncSession, instance_uuid: UUID, params: ListParameters
     ) -> List[NotificationTemplate]:
-        # 1. Базовый запрос с изоляцией данных инстанса (Мультитенантность)
-        stmt = select(NotificationTemplate).where(
-            NotificationTemplate.instance_uuid == instance_uuid
-        )
-
-        # 2. Динамическая фильтрация (поиск по имени шаблона)
-        if params.search:
-            stmt = stmt.where(NotificationTemplate.name.ilike(f"%{params.search}%"))
-
-        # 3. Динамическая сортировка через наш хелпер
-        # Если фронтенд ничего не передал, по умолчанию применится сортировка по "created_at:desc"
-        sort_criterion = params.get_postgres_sort(
-            model=NotificationTemplate, default_field="created_at"
-        )
-        stmt = stmt.order_by(sort_criterion)
-
-        # 4. Выполнение запроса
-        result = await db.execute(stmt)
-        return result.scalars().all()
+        return await NotificationTemplateRepository(db).list(instance_uuid, params)
 
     @staticmethod
     async def get_template_by_uuid(
         db: AsyncSession, instance_uuid: UUID, template_uuid: UUID
     ) -> NotificationTemplate:
         """Возвращает шаблон или бросает доменное исключение."""
-        stmt = select(NotificationTemplate).where(
-            NotificationTemplate.uuid == template_uuid,
-            NotificationTemplate.instance_uuid == instance_uuid,
+        template = await NotificationTemplateRepository(db).get_by_uuid(
+            instance_uuid, template_uuid
         )
-        result = await db.execute(stmt)
-        template = result.scalar_one_or_none()
 
         if not template:
             raise NotificationNotFoundError()
@@ -130,17 +111,9 @@ class NotificationTemplateService:
         # Избегаем передачи несуществующего поля в UPDATE запрос SQLAlchemy
         update_data.pop("entity_mappings", None)
 
-        stmt = (
-            update(NotificationTemplate)
-            .where(
-                NotificationTemplate.uuid == template_uuid,
-                NotificationTemplate.instance_uuid == instance_uuid,
-            )
-            .values(**update_data)
-            .returning(NotificationTemplate.uuid)
+        updated_uuid = await NotificationTemplateRepository(db).update_values(
+            instance_uuid, template_uuid, update_data
         )
-        result = await db.execute(stmt)
-        updated_uuid = result.scalar_one_or_none()
 
         if not updated_uuid:
             raise NotificationNotFoundError()
@@ -165,13 +138,11 @@ class NotificationTemplateService:
             db=db,
         )
 
-        stmt = delete(NotificationTemplate).where(
-            NotificationTemplate.uuid == template_uuid,
-            NotificationTemplate.instance_uuid == instance_uuid,
+        deleted_count = await NotificationTemplateRepository(db).delete_by_uuid(
+            instance_uuid, template_uuid
         )
-        result = await db.execute(stmt)
 
-        if result.rowcount == 0:
+        if deleted_count == 0:
             raise NotificationNotFoundError()
 
         await db.commit()
@@ -181,31 +152,16 @@ class NotificationTemplateService:
         db: AsyncSession, user_uuid: UUID
     ) -> List[NotificationInbox]:
         """Возвращает элементы инбокса сотрудника с подгрузкой истории компиляции."""
-        stmt = (
-            select(NotificationInbox)
-            .options(selectinload(NotificationInbox.history))
-            .where(NotificationInbox.user_uuid == user_uuid)
-            .order_by(NotificationInbox.created_at.desc())
-        )
-        result = await db.execute(stmt)
-        return list(result.scalars().all())
+        return await NotificationInboxRepository(db).list_for_user(user_uuid)
 
     @staticmethod
     async def mark_inbox_as_read(
         db: AsyncSession, user_uuid: UUID, notification_uuid: UUID
     ) -> None:
         """Помечает уведомление как прочитанное."""
-        stmt = (
-            update(NotificationInbox)
-            .where(
-                NotificationInbox.uuid == notification_uuid,
-                NotificationInbox.user_uuid == user_uuid,
-            )
-            .values(is_read=True)
-            .returning(NotificationInbox.uuid)
+        updated_uuid = await NotificationInboxRepository(db).mark_as_read(
+            user_uuid, notification_uuid
         )
-        result = await db.execute(stmt)
-        updated_uuid = result.scalar_one_or_none()
 
         if not updated_uuid:
             raise NotificationNotFoundError()
