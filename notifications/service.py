@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from middleware.schemas import ListParameters
 from notifications.models import NotificationTemplate, NotificationInbox
 from notifications.exceptions.dispatcher import NotificationNotFoundError
-from engine.integrity import SchemaIntegrityValidator
+from core.services.template_integrity import TemplateIntegrityService
 
 
 class NotificationTemplateService:
@@ -28,7 +28,7 @@ class NotificationTemplateService:
         # 1. Запускаем валидацию масок, только если переданы маппинги сущностей
         entity_mappings = payload_data.get("entity_mappings")
         if entity_mappings:
-            await SchemaIntegrityValidator.validate_notification_template(
+            await TemplateIntegrityService.validate_notification_template(
                 instance_uuid=instance_uuid,
                 title=payload_data.get("title", ""),
                 body=payload_data.get("body", ""),
@@ -119,7 +119,7 @@ class NotificationTemplateService:
         )
 
         if full_mappings:
-            await SchemaIntegrityValidator.validate_notification_template(
+            await TemplateIntegrityService.validate_notification_template(
                 instance_uuid=instance_uuid,
                 title=full_title,
                 body=full_body,
@@ -158,7 +158,7 @@ class NotificationTemplateService:
         )
 
         # Защита от удаления
-        await SchemaIntegrityValidator.check_template_destruction_safe(
+        await TemplateIntegrityService.check_template_destruction_safe(
             instance_uuid=instance_uuid,
             template_uuid=template_uuid,
             template_name=current_template.name,

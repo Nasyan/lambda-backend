@@ -8,7 +8,7 @@ from sqlalchemy import select, delete
 from policy.models import StorefrontPolicies
 from policy.schemas import PolicyCreate, PolicyUpdate
 from core.services.template import TemplateService
-from engine.integrity import SchemaIntegrityValidator
+from engine.schema_rules import NoCodeSchemaValidator
 
 # Импортируем наши профессиональные доменные ошибки слоя политик
 from policy.exceptions.service import (
@@ -56,7 +56,7 @@ class PolicyAdminService:
 
         # SchemaDependencyError уже является профессиональным исключением,
         # унаследованным от BaseAppException. Пускаем его наверх без перехвата в HTTPException.
-        SchemaIntegrityValidator.validate_storefront_policy(
+        NoCodeSchemaValidator.validate_storefront_policy(
             schema, payload.model_dump()
         )
 
@@ -132,7 +132,7 @@ class PolicyAdminService:
         }
 
         # Валидируем целостность схемы, исключение SchemaDependencyError летит наверх само
-        SchemaIntegrityValidator.validate_storefront_policy(schema, updated_data)
+        NoCodeSchemaValidator.validate_storefront_policy(schema, updated_data)
 
         # Применяем изменения
         if payload.read_mask is not None:

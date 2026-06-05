@@ -1,7 +1,7 @@
 # core/tests/test_record.py
 
 import pytest
-from engine.integrity import SchemaIntegrityValidator
+from engine.schema_rules import NoCodeSchemaValidator
 from engine.exceptions.integrity import SchemaValidationError
 from policy.models import StorefrontPolicies
 
@@ -279,7 +279,7 @@ class TestSchemaIntegrityCascade:
         }
 
         # Вызов не должен вызывать исключений
-        SchemaIntegrityValidator.validate_storefront_policy(
+        NoCodeSchemaValidator.validate_storefront_policy(
             schema, valid_policy_payload
         )
 
@@ -291,7 +291,7 @@ class TestSchemaIntegrityCascade:
 
         # 1. Меняем класс исключения на SchemaValidationError
         with pytest.raises(SchemaValidationError) as exc_info:
-            SchemaIntegrityValidator.validate_storefront_policy(
+            NoCodeSchemaValidator.validate_storefront_policy(
                 schema, invalid_policy_payload
             )
 

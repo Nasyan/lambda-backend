@@ -1,7 +1,18 @@
-# engine/integrity.py
+# core/services/template_integrity.py
+
+"""Инфраструктурные проверки целостности схемы (Postgres + Mongo).
+
+TemplateIntegrityService — вторая половина бывшего SchemaIntegrityValidator
+(task3, ГЗ-1 Блок A): проверяет каскадные связи таблиц перед их
+удалением/изменением, обращаясь к Postgres (триггеры, виджеты, политики
+витрины, шаблоны уведомлений) и к Mongo через template_repo.
+
+Чистые in-memory проверки живут в engine/schema_rules.py
+(NoCodeSchemaValidator).
+"""
 
 import re
-from typing import Dict, Any, Set, List
+from typing import Dict, Any, Set
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import or_, select
 from uuid import UUID
@@ -13,8 +24,8 @@ from notifications.models import (
     NotificationTemplate,
 )
 
+from engine.schema_rules import NoCodeSchemaValidator
 from engine.exceptions.integrity import (
-    CircularDependencyError,
     SchemaValidationError,
     SchemaDependencyError,
 )
@@ -23,11 +34,12 @@ from logs.decorators import trace_action
 VARIABLE_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\.([a-zA-Z0-9_\.]+)\s*\}\}")
 
 
-class SchemaIntegrityValidator:
-    """
-    Полиция безопасности схемы данных.
-    Проверяет, не сломает ли изменение структуры БД существующие формулы, триггеры,
-    аналитику, правила доступа витрины (Storefront) и шаблоны уведомлений.
+class TemplateIntegrityService:
+    """Полиция безопасности схемы данных (инфраструктурный слой).
+
+    Проверяет, не сломает ли изменение структуры БД существующие формулы,
+    триггеры, аналитику, правила доступа витрины (Storefront) и шаблоны
+    уведомлений.
     """
 
     @classmethod
@@ -184,7 +196,9 @@ class SchemaIntegrityValidator:
             if other_col == column_name:
                 continue
             if meta.get("type") == "formula":
-                used_fields = cls.extract_used_fields(meta.get("ast", {}))
+                used_fields = NoCodeSchemaValidator.extract_used_fields(
+                    meta.get("ast", {})
+                )
                 if _is_used(used_fields):
                     conflicts.append(f"Формула в поле '{other_col}'")
 
@@ -201,7 +215,9 @@ class SchemaIntegrityValidator:
                 trigger.action_mapping_ast,
             ]
             for trigger_ast in trigger_asts:
-                if _is_used(cls.extract_used_fields(trigger_ast or {})):
+                if _is_used(
+                    NoCodeSchemaValidator.extract_used_fields(trigger_ast or {})
+                ):
                     conflicts.append(f"AST в триггере '{trigger.name}'")
                     break
 
@@ -213,7 +229,7 @@ class SchemaIntegrityValidator:
         )
         for widget in result_widgets.scalars().all():
             if widget.ast_filter and _is_used(
-                cls.extract_used_fields(widget.ast_filter)
+                NoCodeSchemaValidator.extract_used_fields(widget.ast_filter)
             ):
                 conflicts.append(f"Фильтр виджета '{widget.name}'")
 
@@ -302,123 +318,6 @@ class SchemaIntegrityValidator:
             )
 
     @classmethod
-    def validate_storefront_policy(
-        cls, schema: Dict[str, Any], policy_data: Dict[str, Any]
-    ) -> None:
-        valid_columns = set(schema.keys())
-
-        def _is_valid_col(col: str) -> bool:
-            base_col = col.split(".")[0]
-            return base_col in valid_columns
-
-        read_mask: List[str] = policy_data.get("read_mask", [])
-        write_mask: List[str] = policy_data.get("write_mask", [])
-        read_filters: Dict[str, Any] = policy_data.get("read_filters", {})
-
-        invalid_read = [col for col in read_mask if not _is_valid_col(col)]
-        if invalid_read:
-            raise SchemaValidationError(
-                reason="Несуществующие поля в маске чтения витрины",
-                invalid_fields=invalid_read,
-                target_context="read_mask",
-            )
-
-        invalid_write = [col for col in write_mask if not _is_valid_col(col)]
-        if invalid_write:
-            raise SchemaValidationError(
-                reason="Несуществующие поля в маске записи витрины",
-                invalid_fields=invalid_write,
-                target_context="write_mask",
-            )
-
-        invalid_filters = [col for col in read_filters.keys() if not _is_valid_col(col)]
-        if invalid_filters:
-            raise SchemaValidationError(
-                reason="Несуществующие поля в серверных фильтрах витрины",
-                invalid_fields=invalid_filters,
-                target_context="read_filters",
-            )
-
-    @classmethod
-    def extract_used_fields(cls, ast_node: Dict[str, Any]) -> Set[str]:
-        if not ast_node or not isinstance(ast_node, dict):
-            return set()
-
-        node_type = ast_node.get("type")
-        used_fields = set()
-
-        if node_type == "field":
-            used_fields.add(ast_node.get("value"))
-        elif node_type == "relation_field":
-            used_fields.add(ast_node.get("relation_column"))
-        elif node_type == "aggregation":
-            if isinstance(ast_node.get("filter_value"), dict):
-                used_fields.update(
-                    cls.extract_used_fields(ast_node.get("filter_value"))
-                )
-        elif node_type in ("binary_op", "logical_op", "string_op", "date_op"):
-            used_fields.update(cls.extract_used_fields(ast_node.get("left", {})))
-            used_fields.update(cls.extract_used_fields(ast_node.get("right", {})))
-        elif node_type == "condition":
-            used_fields.update(cls.extract_used_fields(ast_node.get("condition", {})))
-            used_fields.update(cls.extract_used_fields(ast_node.get("true_expr", {})))
-            used_fields.update(cls.extract_used_fields(ast_node.get("false_expr", {})))
-        elif node_type == "array_reduce":
-            used_fields.add(ast_node.get("array_field"))
-            used_fields.update(
-                cls.extract_used_fields(ast_node.get("item_expression", {}))
-            )
-            used_fields.update(
-                cls.extract_used_fields(ast_node.get("filter_expression", {}))
-            )
-        elif node_type == "object":
-            for child in ast_node.get("fields", {}).values():
-                used_fields.update(cls.extract_used_fields(child))
-        elif node_type == "query":
-            for item in ast_node.get("filters", []):
-                if isinstance(item.get("value"), dict):
-                    used_fields.update(cls.extract_used_fields(item.get("value")))
-
-        return used_fields
-
-    @classmethod
-    @trace_action(name="Integrity::Check_Circular_Deps")
-    def check_circular_dependencies(cls, schema: Dict[str, Any]) -> None:
-        graph: Dict[str, Set[str]] = {}
-        for column_name, meta in schema.items():
-            if meta.get("type") == "formula":
-                ast = meta.get("ast", {})
-                raw_used = cls.extract_used_fields(ast)
-                graph[column_name] = {f.split(".")[0] for f in raw_used if f}
-            else:
-                graph[column_name] = set()
-
-        visited = set()
-        rec_stack = set()
-
-        def dfs(node: str) -> bool:
-            if node in rec_stack:
-                return True
-            if node in visited:
-                return False
-
-            visited.add(node)
-            rec_stack.add(node)
-
-            for neighbor in graph.get(node, []):
-                if dfs(neighbor):
-                    return True
-
-            rec_stack.remove(node)
-            return False
-
-        for node in graph:
-            if dfs(node):
-                raise CircularDependencyError(
-                    f"Обнаружена циклическая зависимость: поле '{node}' зациклено в цепочке вычислений формул."
-                )
-
-    @classmethod
     @trace_action(name="Integrity::Validate_Trigger_AST_Fields")
     async def validate_trigger_ast_fields(
         cls,
@@ -433,7 +332,7 @@ class SchemaIntegrityValidator:
         if not template_uuid or not ast:
             return
 
-        used_fields = cls.extract_used_fields(ast)
+        used_fields = NoCodeSchemaValidator.extract_used_fields(ast)
         if not used_fields:
             return
 

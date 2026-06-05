@@ -1,7 +1,7 @@
 # core/services/record.py
 
 from uuid import UUID
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -16,11 +16,16 @@ from core.exceptions.record import (
     RecordValidationError,
 )
 
+from core.validators.record import (
+    RecordDataValidator,
+    RecordUniqueConstraintChecker,
+)
+from core.services.resolver_factory import RecordResolverFactory
+
 from triggers.service import AutomationService
 from triggers.models import EventType
 from triggers.exceptions.action import SystemContractViolation
 from engine.service import FormulaService
-from engine.context import RecordResolverSession
 
 import logging
 
@@ -28,6 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 class RecordService:
+    """Оркестратор работы с записями (task3, ГЗ-1 Блок B).
+
+    Говорит ЧТО делать: формулы -> валидация -> уникальность -> глупый I/O
+    репозитория -> автоматизации. Сборка резолверов — RecordResolverFactory,
+    проверки — core/validators/record.py.
+    """
+
     def __init__(
         self,
         record_repo: RecordRepository,
@@ -40,48 +52,9 @@ class RecordService:
         self.pg_session = pg_session
         self.mongo_db = mongo_db
 
-    def _create_resolvers(self, instance_uuid: str):
-        """Фабрика для создания резолверов, привязанных к конкретному инстансу."""
-
-        # 1. Батч-резолвер для устранения N+1
-        async def batch_fetch(
-            uuids: List[str],
-        ) -> Dict[str, Dict[str, Any]]:
-            return await self.record_repo.get_records_by_uuids(
-                instance_uuid,
-                uuids,
-            )
-
-        # Поиск одиночной записи по бизнес-ключу (QR, SKU и т.д.)
-        async def custom_lookup(
-            lookup_field: str, value: Any
-        ) -> Optional[Dict[str, Any]]:
-            return await self.record_repo.get_record_by_custom_field(
-                instance_uuid=instance_uuid, field_name=lookup_field, value=value
-            )
-
-        session_resolver = RecordResolverSession(
-            batch_fetch_func=batch_fetch, custom_lookup_func=custom_lookup
-        )
-
-        # 2. Резолвер агрегаций
-        async def resolve_aggregation(
-            target_template_uuid: str,
-            filter_field: str,
-            filter_value: Any,
-            agg_function: str,
-            agg_field: Optional[str],
-        ) -> Any:
-            return await self.record_repo.aggregate_records(
-                instance_uuid=instance_uuid,
-                target_template_uuid=target_template_uuid,
-                filter_field=filter_field,
-                filter_value=filter_value,
-                agg_function=agg_function,
-                agg_field=agg_field,
-            )
-
-        return session_resolver, resolve_aggregation
+        self.resolver_factory = RecordResolverFactory(record_repo)
+        self.data_validator = RecordDataValidator(record_repo)
+        self.unique_checker = RecordUniqueConstraintChecker(record_repo)
 
     async def create_new_record(
         self,
@@ -105,7 +78,9 @@ class RecordService:
                 template_uuid=str_template, instance_uuid=str_instance
             )
 
-        session_resolver, aggregation_resolver = self._create_resolvers(str_instance)
+        session_resolver, aggregation_resolver = self.resolver_factory.create(
+            str_instance
+        )
 
         computed_data = await FormulaService.process_record_formulas(
             template_schema=template["schema"],
@@ -115,13 +90,23 @@ class RecordService:
         )
 
         try:
-            inserted_record = await self.record_repo.create_record(
+            await self.data_validator.validate(
+                data=computed_data,
+                schema=template["schema"],
+                instance_uuid=str_instance,
+                s3_service=s3_service,
+            )
+            await self.unique_checker.check(
                 instance_uuid=str_instance,
                 template_uuid=str_template,
                 data=computed_data,
                 schema=template["schema"],
+            )
+            inserted_record = await self.record_repo.create_record(
+                instance_uuid=str_instance,
+                template_uuid=str_template,
+                data=computed_data,
                 user_uuid=str(user_uuid),
-                s3_service=s3_service,
             )
         except Exception as e:
             raise RecordValidationError(
@@ -224,7 +209,9 @@ class RecordService:
         }
 
         # Создаем резолверы
-        session_resolver, aggregation_resolver = self._create_resolvers(str_instance)
+        session_resolver, aggregation_resolver = self.resolver_factory.create(
+            str_instance
+        )
 
         # Пересчитываем формулы при обновлении
         computed_data = await FormulaService.process_record_formulas(
@@ -234,16 +221,26 @@ class RecordService:
             aggregation_resolver=aggregation_resolver,
         )
 
-        # Обновляем запись уже вычисленными данными
+        # Валидируем и обновляем запись уже вычисленными данными
         try:
-            updated_record = await self.record_repo.update_record_data(
+            await self.data_validator.validate(
+                data=computed_data,
+                schema=template["schema"],
+                instance_uuid=str_instance,
+                s3_service=s3_service,
+            )
+            await self.unique_checker.check(
                 instance_uuid=str_instance,
                 template_uuid=str_template,
+                data=computed_data,
+                schema=template["schema"],
+                exclude_record_uuid=str_record,
+            )
+            updated_record = await self.record_repo.update_record_data(
+                instance_uuid=str_instance,
                 record_uuid=str_record,
                 new_data=computed_data,
-                schema=template["schema"],
                 user_uuid=str(user_uuid),
-                s3_service=s3_service,
             )
         except RecordNotFoundError:
             raise RecordNotFoundDomainError(

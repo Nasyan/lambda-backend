@@ -22,9 +22,14 @@ from users.models import Users, AppTools, UserRole
 from jsonwebtoken.utils import get_current_active_user
 from users.auth import RequireTool
 
-from mongo.dependecies import get_record_repository, get_template_repository
+from mongo.dependecies import (
+    get_record_repository,
+    get_template_repository,
+    get_trigger_metadata_repository,
+)
 from mongo.record import RecordRepository
 from mongo.template import TemplateRepository
+from mongo.trigger_metadata import TriggerMetadataRepository
 
 from core.exceptions.dependecies import (
     CreatorRoleRequiredError,
@@ -102,6 +107,9 @@ async def create_trigger(
     current_user: Users = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     template_repo: TemplateRepository = Depends(get_template_repository),
+    trigger_meta_repo: TriggerMetadataRepository = Depends(
+        get_trigger_metadata_repository
+    ),
 ):
     verify_creator_and_instance(instance_uuid, current_user)
 
@@ -146,7 +154,7 @@ async def create_trigger(
             "target_field": target_field,
         }
 
-        await template_repo.inject_trigger_to_schema(
+        await trigger_meta_repo.inject_trigger_to_schema(
             instance_uuid=str(instance_uuid),
             template_uuid=str(payload.target_template_uuid),
             column_name=target_field,
@@ -167,6 +175,9 @@ async def update_trigger(
     current_user: Users = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     template_repo: TemplateRepository = Depends(get_template_repository),
+    trigger_meta_repo: TriggerMetadataRepository = Depends(
+        get_trigger_metadata_repository
+    ),
 ):
     verify_creator_and_instance(instance_uuid, current_user)
 
@@ -208,7 +219,7 @@ async def update_trigger(
     trigger.payload_return_type = payload_return_type
 
     if should_sync_schema and old_target_field and old_target_template_uuid:
-        await template_repo.remove_trigger_from_schema(
+        await trigger_meta_repo.remove_trigger_from_schema(
             instance_uuid=str(instance_uuid),
             template_uuid=str(old_target_template_uuid),
             column_name=old_target_field,
@@ -224,7 +235,7 @@ async def update_trigger(
             "target_field": trigger.target_field,
         }
 
-        await template_repo.inject_trigger_to_schema(
+        await trigger_meta_repo.inject_trigger_to_schema(
             instance_uuid=str(instance_uuid),
             template_uuid=str(trigger.target_template_uuid),
             column_name=trigger.target_field,
@@ -270,6 +281,9 @@ async def delete_trigger(
     current_user: Users = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     template_repo: TemplateRepository = Depends(get_template_repository),
+    trigger_meta_repo: TriggerMetadataRepository = Depends(
+        get_trigger_metadata_repository
+    ),
 ):
     verify_creator_and_instance(instance_uuid, current_user)
 
@@ -287,7 +301,7 @@ async def delete_trigger(
     target_field = getattr(trigger, "target_field", None)
 
     if trigger.target_template_uuid and target_field:
-        await template_repo.remove_trigger_from_schema(
+        await trigger_meta_repo.remove_trigger_from_schema(
             instance_uuid=str(instance_uuid),
             template_uuid=str(trigger.target_template_uuid),
             column_name=target_field,

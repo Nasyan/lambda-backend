@@ -178,7 +178,7 @@ EXCEPTION_STATUS_MAPPING = {
     FormulaResolverRequiredError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     FormulaValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     FormulaTypeMismatchError: status.HTTP_422_UNPROCESSABLE_CONTENT,
-    # engine/integrity
+    # engine/schema_rules + core/services/template_integrity (бывш. engine/integrity)
     CircularDependencyError: status.HTTP_400_BAD_REQUEST,
     SchemaValidationError: status.HTTP_400_BAD_REQUEST,
     SchemaDependencyError: status.HTTP_409_CONFLICT,

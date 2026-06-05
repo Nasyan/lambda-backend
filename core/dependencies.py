@@ -17,6 +17,7 @@ from mongo.db import get_mongo_db
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from mongo.record import RecordRepository
 from core.services.record import RecordService
+from core.services.schema_migration import SchemaMigrationService
 
 # Профессиональные исключения безопасности контуров (Multi-tenancy)
 from core.exceptions.dependecies import (
@@ -95,7 +96,9 @@ async def get_record_service(
 
 async def get_template_service(mongo_db=Depends(get_mongo_db)) -> TemplateService:
     repository = TemplateRepository(mongo_db)
-    return TemplateService(repository)
+    record_repo = RecordRepository(mongo_db)
+    schema_migration = SchemaMigrationService(record_repo)
+    return TemplateService(repository, schema_migration=schema_migration)
 
 
 async def get_current_instance_user(
