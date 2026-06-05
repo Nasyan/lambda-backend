@@ -188,7 +188,15 @@ class TemplateIntegrityService:
 
         def _is_used(used_set: Set[str]) -> bool:
             for f in used_set:
-                if f and (f == column_name or f.startswith(f"{column_name}.")):
+                if not f:
+                    continue
+                # $old.<field>/$new.<field> в триггерных AST указывают на то же
+                # физическое поле схемы — нормализуем префикс state-tracking'а.
+                if f.startswith("$old.") or f.startswith("$new."):
+                    f = f.split(".", 1)[1]
+                elif f in ("$old", "$new"):
+                    continue
+                if f == column_name or f.startswith(f"{column_name}."):
                     return True
             return False
 

@@ -119,7 +119,7 @@ class TestIdempotentUpdateTriggers:
                     "pickup": True,
                     "cost": 300,
                     "source": "сайт",
-                    "payment": "наличными",
+                    "payment": "наличкой",
                     "real_cost": 300,
                 }
             },
@@ -161,7 +161,7 @@ class TestIdempotentUpdateTriggers:
         #    тоже изменение, но $new.payment != 'картой' -> списания нет.
         patch_back = await test_client.patch(
             order_url,
-            json={"data": {"payment": "наличными"}},
+            json={"data": {"payment": "наличкой"}},
             headers=headers,
         )
         assert patch_back.status_code == 200, patch_back.text

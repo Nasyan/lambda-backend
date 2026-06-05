@@ -35,13 +35,15 @@ class TestSchemaIntegrityProtection:
             "event_type": "ON_RECORD_CREATE",
             "action_name": "test_action",
             "action_params": {"required_text": "Новый макет добавлен в трекер"},
-            "ast": {
+            "source_template_uuid": template_uuid,
+            "target_template_uuid": template_uuid,
+            "condition_ast": {
                 "type": "binary_op",
                 "operator": "eq",
                 "left": {"type": "field", "value": "status"},
                 "right": {"type": "literal", "value": "needs_review"},
             },
-            "target_template_uuid": template_uuid,
+            "payload_ast": {"type": "field", "value": "status"},
         }
         trigger_resp = await test_client.post(
             f"/instances/{instance_uuid}/triggers/",

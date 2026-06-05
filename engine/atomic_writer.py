@@ -221,9 +221,10 @@ class TargetAtomicWriter:
             if len(branches) == 1
             else {**base_query, "$or": branches}
         )
+        # Без искусственного потолка: батч мог затронуть тысячи записей,
+        # каскад обязан увидеть их все (ГЗ-2; ранее стоял cap branches*100).
         cursor = self.collection.find(query)
-        records = await cursor.to_list(length=max(len(branches), 1) * 100)
-        return [stringify_id(record) for record in records]
+        return [stringify_id(record) async for record in cursor]
 
     def _translate_operations(self, operations: Any) -> Dict[str, Dict[str, Any]]:
         update_doc: Dict[str, Dict[str, Any]] = {}
