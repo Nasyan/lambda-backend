@@ -481,3 +481,135 @@ async def setup_crm_dynamic_cost_and_trigger(test_client, create_test_environmen
         "products_template_uuid": products_template_uuid,
         "orders_template_uuid": orders_template_uuid,
     }
+
+
+# =============================================================================
+# task3 ГЗ-3 Фаза 2 — локальные фабрики доменных объектов
+# =============================================================================
+
+
+@pytest.fixture
+def record_factory():
+    """Фабрика записей через публичный API: убирает сборку URL/JSON из тестов."""
+
+    async def _create(
+        test_client, instance_uuid: str, template_uuid: str, headers: dict, **data
+    ):
+        response = await test_client.post(
+            f"/instances/{instance_uuid}/templates/{template_uuid}/notes",
+            json={"data": data},
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _create
+
+
+@pytest.fixture
+def trigger_factory():
+    """Фабрика триггеров: postит произвольный payload и возвращает ответ."""
+
+    async def _create(
+        test_client,
+        instance_uuid: str,
+        headers: dict,
+        payload: Dict[str, Any],
+        expected_status: int = 201,
+    ):
+        response = await test_client.post(
+            f"/instances/{instance_uuid}/triggers/",
+            json=payload,
+            headers=headers,
+        )
+        assert response.status_code == expected_status, response.text
+        return response
+
+    return _create
+
+
+@pytest_asyncio.fixture
+async def loyalty_crm_env(test_client, create_test_environment):
+    """CRM-окружение программы лояльности (task3 ГЗ-3 Фаза 3).
+
+    Таблицы: Клиенты (phone unique, points, tier), Товары, Заказы,
+    Награды (rewards) и Дозаказы (reorder_requests) — полигон для цепочек
+    каскадных автоматизаций.
+    """
+    user_uuid, instance_uuid, headers = await create_test_environment()
+    templates_url = f"/instances/{instance_uuid}/templates"
+
+    async def _make_template(name, schema):
+        resp = await test_client.post(
+            templates_url, json={"name": name, "schema": schema}, headers=headers
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["_id"]
+
+    clients_id = await _make_template(
+        "Клиенты",
+        {
+            "name": {"type": "string", "required": False},
+            "phone": {"type": "string", "required": True, "unique": True},
+            "points": {"type": "number", "required": False},
+            "tier": {"type": "string", "required": False},
+        },
+    )
+    products_id = await _make_template(
+        "Товары",
+        {
+            "name": {"type": "string", "required": True},
+            "quantity_left": {"type": "number", "required": True},
+            "cost": {"type": "number", "required": True},
+        },
+    )
+    orders_id = await _make_template(
+        "Заказы",
+        {
+            "product_list": {
+                "type": "relation_list",
+                "required": True,
+                "target_template_uuid": products_id,
+            },
+            "client_phone": {"type": "string", "required": False},
+            "client_name": {"type": "string", "required": False},
+            "pickup": {"type": "boolean", "required": True},
+            "cost": {"type": "number", "required": True},
+            "source": {
+                "type": "select",
+                "options": ["сайт", "инстаграм"],
+                "required": True,
+            },
+            "payment": {
+                "type": "select",
+                "options": ["картой", "наличкой"],
+                "required": True,
+            },
+            "real_cost": {"type": "number", "required": True},
+        },
+    )
+    rewards_id = await _make_template(
+        "Награды",
+        {
+            "client_phone": {"type": "string", "required": True},
+            "reward": {"type": "string", "required": True},
+        },
+    )
+    reorders_id = await _make_template(
+        "Дозаказы",
+        {
+            "product_name": {"type": "string", "required": True, "unique": True},
+            "status": {"type": "string", "required": False},
+        },
+    )
+
+    return {
+        "user_uuid": user_uuid,
+        "instance_uuid": instance_uuid,
+        "headers": headers,
+        "clients_template_uuid": clients_id,
+        "products_template_uuid": products_id,
+        "orders_template_uuid": orders_id,
+        "rewards_template_uuid": rewards_id,
+        "reorders_template_uuid": reorders_id,
+    }

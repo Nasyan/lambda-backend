@@ -72,6 +72,7 @@ class AutomationService:
             nested_template_uuid: str,
             nested_document: Dict[str, Any],
             nested_depth: int,
+            nested_previous_document: Optional[Dict[str, Any]] = None,
         ) -> None:
             await cls.handle_event(
                 pg_session=pg_session,
@@ -82,6 +83,7 @@ class AutomationService:
                 document=nested_document,
                 manual_input=manual_input,
                 cascade_depth=nested_depth,
+                previous_document=nested_previous_document,
             )
 
         for trigger in event_context.triggers:
@@ -173,6 +175,7 @@ class AutomationService:
             nested_template_uuid: str,
             nested_document: Dict[str, Any],
             nested_depth: int,
+            nested_previous_document: Optional[Dict[str, Any]] = None,
         ) -> None:
             await cls.handle_event(
                 pg_session=pg_session,
@@ -183,6 +186,7 @@ class AutomationService:
                 document=nested_document,
                 manual_input=manual_input,
                 cascade_depth=nested_depth,
+                previous_document=nested_previous_document,
             )
 
         return await cls._run_trigger_pipeline(

@@ -21,3 +21,5 @@ exclude = '''
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# task3 ГЗ-3: session-scoped движки требуют общей event-петли с тестами
+asyncio_default_fixture_loop_scope = "session"

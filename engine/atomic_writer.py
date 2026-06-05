@@ -161,6 +161,49 @@ class TargetAtomicWriter:
         counts["write_errors"] = write_errors
         return counts
 
+    async def fetch_pre_images(self) -> Dict[str, Dict[str, Any]]:
+        """Снимки целевых записей ДО применения батча (для $old/$new в каскадах).
+
+        Вызывается ПЕРЕД flush(): по текущим op-целям читает существующие
+        документы. Для insert/upsert-вставок записи ещё нет — снимка нет,
+        каскад получит previous_document=None (семантика CREATE).
+        """
+        ids: Set[str] = set()
+        filters: List[Dict[str, Any]] = []
+        for op_target in self._op_targets:
+            kind = op_target[0]
+            if kind == "id":
+                ids.add(op_target[1])
+            elif kind == "filter":
+                filters.append(op_target[1])
+            elif kind == "filter_or_id":
+                filters.append(op_target[1])
+                ids.add(op_target[2])
+
+        if not ids and not filters:
+            return {}
+
+        base_query = {
+            "instance_uuid": self.instance_uuid,
+            "template_uuid": self.target_template_uuid,
+        }
+        branches: List[Dict[str, Any]] = []
+        if ids:
+            branches.append({"_id": {"$in": sorted(ids)}})
+        branches.extend(filters)
+        query = (
+            {**base_query, **branches[0]}
+            if len(branches) == 1
+            else {**base_query, "$or": branches}
+        )
+
+        pre_images: Dict[str, Dict[str, Any]] = {}
+        cursor = self.collection.find(query)
+        async for record in cursor:
+            stringify_id(record)
+            pre_images[str(record["_id"])] = record
+        return pre_images
+
     async def fetch_touched_records(self) -> List[Dict[str, Any]]:
         if not self._touched_record_ids and not self._touched_filters:
             return []

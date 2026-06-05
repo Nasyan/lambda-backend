@@ -13,7 +13,8 @@ from triggers.models import EventType, PayloadReturnType, Trigger
 
 
 CascadeCallback = Callable[
-    [EventType, str, Dict[str, Any], int],
+    # (event_type, template_uuid, document, depth, previous_document)
+    [EventType, str, Dict[str, Any], int, Optional[Dict[str, Any]]],
     Awaitable[None],
 ]
 
@@ -121,6 +122,10 @@ class ActionDispatcher:
             )
             cls._enqueue_dml(writer, trigger, mapped, action_input, scope)
 
+        # Pre-images ДО записи: каскадные UPDATE-триггеры получают $old-состояние
+        # (иначе пороговые/идемпотентные условия второго звена слепы, ГЗ-2 п.1).
+        pre_images = await writer.fetch_pre_images() if cascade_callback else {}
+
         flush_result = await writer.flush()
         touched_records = await writer.fetch_touched_records()
 
@@ -136,6 +141,7 @@ class ActionDispatcher:
                     target_template_uuid,
                     record,
                     cascade_depth + 1,
+                    pre_images.get(str(record.get("_id"))),
                 )
 
         status = "partial" if flush_result.get("failed_count") else "success"
