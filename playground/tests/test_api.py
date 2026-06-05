@@ -147,17 +147,19 @@ class TestTriggersPermissions:
         trigger_payload = {
             "name": "Секретный хук пользователя",
             "trigger_type": "AUTOMATION",
+            "source_template_uuid": template_uuid,
             "target_template_uuid": template_uuid,
             "target_field": "email",
             "event_type": "ON_RECORD_UPDATE",
-            "action_name": "SEND_WEBHOOK",
-            "action_params": {"url": "https://hooks.pravaon.by/leak"},
-            "ast": {
+            "action_name": "test_action",
+            "action_params": {"required_text": "forbidden"},
+            "condition_ast": {
                 "type": "binary_op",
                 "operator": "eq",
                 "left": {"type": "field", "value": "email"},
                 "right": {"type": "literal", "value": "test@example.com"},
             },
+            "payload_ast": {"type": "field", "value": "email"},
         }
 
         # 3. Пытаемся отправить запрос от лица обычного пользователя

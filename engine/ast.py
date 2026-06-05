@@ -1,6 +1,6 @@
 # engine/ast.py
 
-from typing import Literal, Union, Annotated, Optional
+from typing import Literal, Union, Annotated, Optional, Dict, List
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
 from engine.exceptions.evaluator import FormulaValidationError
 
@@ -107,6 +107,25 @@ class ArrayReduceNode(BaseModel):
     filter_expression: Optional["ASTNode"] = None
 
 
+class ObjectNode(BaseModel):
+    type: Literal["object"] = "object"
+    fields: Dict[str, "ASTNode"]
+
+
+class QueryFilter(BaseModel):
+    field: str
+    operator: Literal["eq", "ne", "gt", "lt", "gte", "lte", "contains"] = "eq"
+    value: "ASTNode"
+
+
+class QueryNode(BaseModel):
+    type: Literal["query"] = "query"
+    target_template_uuid: str
+    filters: List[QueryFilter] = Field(default_factory=list)
+    limit: int = Field(default=20, ge=1, le=100)
+    return_fields: Optional[List[str]] = None
+
+
 # Объединяем все узлы
 ASTNode = Annotated[
     Union[
@@ -121,6 +140,8 @@ ASTNode = Annotated[
         StringOpNode,
         AggregationNode,
         ArrayReduceNode,
+        ObjectNode,
+        QueryNode,
     ],
     Field(discriminator="type"),
 ]
@@ -133,6 +154,9 @@ DateOpNode.model_rebuild()
 StringOpNode.model_rebuild()
 AggregationNode.model_rebuild()
 ArrayReduceNode.model_rebuild()
+ObjectNode.model_rebuild()
+QueryFilter.model_rebuild()
+QueryNode.model_rebuild()
 
 ASTAdapter = TypeAdapter(ASTNode)
 

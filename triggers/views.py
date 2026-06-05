@@ -1,6 +1,5 @@
 # triggers/views.py
 
-import logging
 from uuid import UUID
 from typing import List, Dict, Any
 import uuid
@@ -10,7 +9,14 @@ from sqlalchemy import select
 
 from database.db import get_db
 from triggers.models import Trigger
-from triggers.schemas import TriggerCreate, TriggerResponse, TriggerEvaluateRequest
+from triggers.schemas import (
+    TriggerCreate,
+    TriggerEvaluateRequest,
+    TriggerResponse,
+    TriggerUpdate,
+)
+from triggers.service import AutomationService
+from triggers.validator import TriggerSchemaValidator
 
 from users.models import Users, AppTools, UserRole
 from jsonwebtoken.utils import get_current_active_user
@@ -20,11 +26,6 @@ from mongo.dependecies import get_record_repository, get_template_repository
 from mongo.record import RecordRepository
 from mongo.template import TemplateRepository
 
-from engine.evaluator import FormulaEvaluator
-from engine.context import RecordResolverSession
-from engine.ast import parse_ast
-from triggers.actions import ACTION_MAPPING
-
 from core.exceptions.dependecies import (
     CreatorRoleRequiredError,
     InstanceAccessDeniedError,
@@ -33,15 +34,13 @@ from core.exceptions.dependecies import (
 from triggers.exceptions.action import (
     AutomationValidationError,
     AutomationExecutionError,
+    SystemContractViolation,
     TriggerNotFoundDomainError,
 )
 
 from middleware.schemas import ListParameters
 
 from engine.exceptions.evaluator import FormulaEvaluationError
-from engine.integrity import SchemaIntegrityValidator
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/instances/{instance_uuid}/triggers",
@@ -71,6 +70,31 @@ def verify_creator_and_instance(instance_uuid: UUID, current_user: Users) -> Non
         )
 
 
+def _dump_action_params(action_params: Any) -> Any:
+    if hasattr(action_params, "model_dump"):
+        return action_params.model_dump(mode="json")
+    return action_params
+
+
+def _trigger_validation_data(trigger: Trigger) -> Dict[str, Any]:
+    return {
+        "instance_uuid": trigger.instance_uuid,
+        "name": trigger.name,
+        "trigger_type": trigger.trigger_type,
+        "condition_ast": trigger.condition_ast,
+        "payload_ast": trigger.payload_ast,
+        "payload_return_type": trigger.payload_return_type,
+        "action_mapping_ast": trigger.action_mapping_ast,
+        "source_template_uuid": trigger.source_template_uuid,
+        "target_template_uuid": trigger.target_template_uuid,
+        "target_field": trigger.target_field,
+        "event_type": trigger.event_type,
+        "cron_expression": trigger.cron_expression,
+        "action_name": trigger.action_name,
+        "action_params": trigger.action_params,
+    }
+
+
 @router.post("/", response_model=TriggerResponse, status_code=status.HTTP_201_CREATED)
 async def create_trigger(
     instance_uuid: UUID,
@@ -81,19 +105,15 @@ async def create_trigger(
 ):
     verify_creator_and_instance(instance_uuid, current_user)
 
-    # Валидация AST графа
-    try:
-        parse_ast(payload.ast)
-    except Exception as e:
-        raise AutomationValidationError(detail=f"Кривой AST граф: {str(e)}")
-
-    if payload.target_template_uuid:
-        await SchemaIntegrityValidator.validate_trigger_ast_fields(
-            instance_uuid=instance_uuid,
-            template_uuid=payload.target_template_uuid,
-            ast=payload.ast,
-            template_repo=template_repo,
-        )
+    validator = TriggerSchemaValidator()
+    trigger_data = payload.model_dump()
+    trigger_data["instance_uuid"] = instance_uuid
+    trigger_data["action_params"] = _dump_action_params(payload.action_params)
+    payload_return_type = await validator.validate(
+        trigger_data=trigger_data,
+        db=db,
+        template_repo=template_repo,
+    )
 
     target_field = getattr(payload, "target_field", None)
 
@@ -102,16 +122,17 @@ async def create_trigger(
         instance_uuid=instance_uuid,
         name=payload.name,
         trigger_type=payload.trigger_type,
-        ast=payload.ast,
+        condition_ast=payload.condition_ast,
+        payload_ast=payload.payload_ast,
+        payload_return_type=payload_return_type,
+        action_mapping_ast=payload.action_mapping_ast,
+        source_template_uuid=payload.source_template_uuid,
         target_template_uuid=payload.target_template_uuid,
         target_field=target_field,
         event_type=payload.event_type,
+        cron_expression=payload.cron_expression,
         action_name=payload.action_name,
-        action_params=(
-            payload.action_params.model_dump()
-            if hasattr(payload.action_params, "model_dump")
-            else payload.action_params
-        ),
+        action_params=_dump_action_params(payload.action_params),
     )
     db.add(db_trigger)
     await db.flush()
@@ -136,6 +157,84 @@ async def create_trigger(
     await db.commit()
     await db.refresh(db_trigger)
     return db_trigger
+
+
+@router.patch("/{trigger_uuid}", response_model=TriggerResponse)
+async def update_trigger(
+    instance_uuid: UUID,
+    trigger_uuid: UUID,
+    payload: TriggerUpdate,
+    current_user: Users = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    template_repo: TemplateRepository = Depends(get_template_repository),
+):
+    verify_creator_and_instance(instance_uuid, current_user)
+
+    result = await db.execute(
+        select(Trigger).where(
+            Trigger.instance_uuid == instance_uuid,
+            Trigger.id == trigger_uuid,
+        )
+    )
+    trigger = result.scalar_one_or_none()
+    if not trigger:
+        raise TriggerNotFoundDomainError(trigger_uuid=str(trigger_uuid))
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if "action_params" in update_data:
+        update_data["action_params"] = _dump_action_params(payload.action_params)
+
+    validation_data = _trigger_validation_data(trigger)
+    validation_data.update(update_data)
+    validation_data["instance_uuid"] = instance_uuid
+
+    validator = TriggerSchemaValidator()
+    payload_return_type = await validator.validate(
+        trigger_data=validation_data,
+        db=db,
+        template_repo=template_repo,
+        trigger_uuid=trigger_uuid,
+    )
+
+    old_target_field = trigger.target_field
+    old_target_template_uuid = trigger.target_template_uuid
+    should_sync_schema = bool(
+        {"target_field", "target_template_uuid", "trigger_type", "event_type"}
+        & set(update_data.keys())
+    )
+
+    for field_name, value in update_data.items():
+        setattr(trigger, field_name, value)
+    trigger.payload_return_type = payload_return_type
+
+    if should_sync_schema and old_target_field and old_target_template_uuid:
+        await template_repo.remove_trigger_from_schema(
+            instance_uuid=str(instance_uuid),
+            template_uuid=str(old_target_template_uuid),
+            column_name=old_target_field,
+            trigger_id=str(trigger.id),
+            user_uuid=str(current_user.uuid),
+        )
+
+    if should_sync_schema and trigger.target_field and trigger.target_template_uuid:
+        trigger_data_for_schema = {
+            "trigger_id": str(trigger.id),
+            "trigger_type": trigger.trigger_type,
+            "event": trigger.event_type or "onCalculate",
+            "target_field": trigger.target_field,
+        }
+
+        await template_repo.inject_trigger_to_schema(
+            instance_uuid=str(instance_uuid),
+            template_uuid=str(trigger.target_template_uuid),
+            column_name=trigger.target_field,
+            trigger_data=trigger_data_for_schema,
+            user_uuid=str(current_user.uuid),
+        )
+
+    await db.commit()
+    await db.refresh(trigger)
+    return trigger
 
 
 @router.get("/", response_model=List[TriggerResponse])
@@ -223,38 +322,12 @@ async def evaluate_trigger_live(
         raise TriggerNotFoundDomainError(trigger_uuid=str(trigger_uuid))
 
     try:
-        ast_tree = parse_ast(trigger.ast)
-    except Exception as e:
-        raise AutomationValidationError(detail=f"Ошибка парсинга AST: {str(e)}")
-
-    # Локальные фабрики контекстов
-    async def batch_fetcher(uuids: List[str]) -> Dict[str, Dict[str, Any]]:
-        return await mongo_repo.get_records_by_uuids(str(instance_uuid), uuids)
-
-    session_resolver = RecordResolverSession(batch_fetch_func=batch_fetcher)
-
-    async def resolve_aggregation(
-        target_template_uuid: str,
-        filter_field: str,
-        filter_value: Any,
-        agg_function: str,
-        agg_field: str,
-    ):
-        return await mongo_repo.aggregate_records(
+        result_value = await AutomationService.evaluate_trigger_payload(
+            mongo_db=mongo_repo.collection.database,
             instance_uuid=str(instance_uuid),
-            target_template_uuid=target_template_uuid,
-            filter_field=filter_field,
-            filter_value=filter_value,
-            agg_function=agg_function,
-            agg_field=agg_field,
-        )
-
-    try:
-        result_value = await FormulaEvaluator.evaluate(
-            node=ast_tree,
-            context=payload.context_data,
-            record_resolver=session_resolver,
-            aggregation_resolver=resolve_aggregation,
+            trigger=trigger,
+            context_data=payload.context_data,
+            manual_input=payload.manual_input,
         )
         return {"status": "success", "result": result_value}
     except Exception as e:
@@ -282,91 +355,32 @@ async def execute_trigger_action(
     if not trigger:
         raise TriggerNotFoundDomainError(trigger_uuid=str(trigger_uuid))
 
-    trigger_type_value = (
-        trigger.trigger_type.value
-        if hasattr(trigger.trigger_type, "value")
-        else trigger.trigger_type
-    )
+    trigger_type_value = trigger.trigger_type.value if hasattr(
+        trigger.trigger_type, "value"
+    ) else trigger.trigger_type
 
-    if trigger_type_value != "AUTOMATION" or not trigger.action_name:
+    if trigger_type_value != "AUTOMATION":
         raise AutomationValidationError(
             detail="Этот триггер не является автоматизацией."
         )
 
-    action_func = ACTION_MAPPING.get(trigger.action_name)
-    if not action_func:
-        raise AutomationValidationError(
-            detail=f"Неизвестное действие: {trigger.action_name}"
-        )
-
     try:
-        ast_tree = parse_ast(trigger.ast)
-    except Exception as e:
-        raise AutomationValidationError(detail=f"Ошибка парсинга AST условия: {str(e)}")
-
-    if not trigger.target_template_uuid:
-        raise AutomationValidationError(
-            detail="Триггер должен быть привязан к target_template_uuid"
+        execution_result = await AutomationService.execute_trigger_once(
+            pg_session=db,
+            mongo_db=mongo_repo.collection.database,
+            trigger=trigger,
+            document={},
         )
-
-    # Сборка контекста вычислений
-    async def batch_fetcher(uuids: List[str]) -> Dict[str, Dict[str, Any]]:
-        return await mongo_repo.get_records_by_uuids(str(instance_uuid), uuids)
-
-    session_resolver = RecordResolverSession(batch_fetch_func=batch_fetcher)
-
-    async def resolve_aggregation(
-        target_template_uuid: str,
-        filter_field: str,
-        filter_value: Any,
-        agg_function: str,
-        agg_field: str,
-    ):
-        return await mongo_repo.aggregate_records(
-            instance_uuid=str(instance_uuid),
-            target_template_uuid=target_template_uuid,
-            filter_field=filter_field,
-            filter_value=filter_value,
-            agg_function=agg_function,
-            agg_field=agg_field,
-        )
-
-    matched_targets = []
-    async for record in mongo_repo.stream_records(
-        instance_uuid=str(instance_uuid),
-        template_uuid=str(trigger.target_template_uuid),
-    ):
-        try:
-            is_match = await FormulaEvaluator.evaluate(
-                node=ast_tree,
-                context=record,
-                record_resolver=session_resolver,
-                aggregation_resolver=resolve_aggregation,
-            )
-            if is_match is True:
-                matched_targets.append(record)
-        except Exception as e:
-            logger.warning(
-                f"Ошибка вычисления условия для записи {record.get('_id')}: {e}"
-            )
-            continue
-
-    try:
-        mongo_db_instance = mongo_repo.collection.database
-        execution_result = await action_func(
-            instance_uuid=str(instance_uuid),
-            targets=matched_targets,
-            params=trigger.action_params or {},
-            db=mongo_db_instance,
-        )
-
         return {
             "status": "success",
-            "message": f"Действие {trigger.action_name} успешно выполнено.",
-            "matched_records_count": len(matched_targets),
+            "message": f"Триггер {trigger.name} успешно выполнен.",
             "execution_details": execution_result,
         }
+    except SystemContractViolation:
+        raise
     except Exception as e:
         raise AutomationExecutionError(
-            detail=f"Ошибка выполнения действия автоматизации: {str(e)}"
+            detail=(
+                f"Ошибка выполнения действия автоматизации: {str(e)}"
+            )
         )

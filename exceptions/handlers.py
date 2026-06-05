@@ -86,7 +86,11 @@ from policy.exceptions.service import (
 from triggers.exceptions.action import (
     AutomationValidationError,
     AutomationExecutionError,
+    SystemContractViolation,
     TriggerNotFoundDomainError,
+)
+from triggers.exceptions.validation import (
+    RecordValidationError as TriggerRecordValidationError,
 )
 from triggers.exceptions.service import (
     AutomationActionNotFoundError,
@@ -209,7 +213,10 @@ EXCEPTION_STATUS_MAPPING = {
     # triggers/action
     AutomationValidationError: status.HTTP_400_BAD_REQUEST,
     AutomationExecutionError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # Invariant breach: stage-2 validator should have prevented this.
+    SystemContractViolation: status.HTTP_500_INTERNAL_SERVER_ERROR,
     TriggerNotFoundDomainError: status.HTTP_404_NOT_FOUND,
+    TriggerRecordValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # triggers/service
     AutomationActionNotFoundError: status.HTTP_400_BAD_REQUEST,
     AutomationConditionEvaluationError: status.HTTP_422_UNPROCESSABLE_CONTENT,

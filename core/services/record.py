@@ -18,6 +18,7 @@ from core.exceptions.record import (
 
 from triggers.service import AutomationService
 from triggers.models import EventType
+from triggers.exceptions.action import SystemContractViolation
 from engine.service import FormulaService
 from engine.context import RecordResolverSession
 
@@ -136,6 +137,8 @@ class RecordService:
                 event_type=EventType.ON_RECORD_CREATE,
                 current_record=inserted_record,
             )
+        except SystemContractViolation:
+            raise
         except Exception as automation_error:
             # Трейсбек триггеров не должен прерывать успешное сохранение записи,
             # поэтому здесь мы оставляем безопасный изолированный logger.error
@@ -264,6 +267,8 @@ class RecordService:
                 event_type=EventType.ON_RECORD_UPDATE,
                 current_record=updated_record,
             )
+        except SystemContractViolation:
+            raise
         except Exception as automation_error:
             logger.error(
                 f"Критический сбой автоматизации обновления: {automation_error}",

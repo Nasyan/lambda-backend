@@ -3,6 +3,10 @@
 import uuid
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="deprecated by trigger-engine-v2; superseded by playground/tests"
+)
+
 
 class TestAutomationsAndActions:
 

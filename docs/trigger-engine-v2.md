@@ -1,0 +1,216 @@
+# Trigger Engine v2
+
+## Model Contract
+
+`Trigger` no longer stores one ambiguous `ast` tree. Runtime metadata is split by role:
+
+| Field | Purpose |
+|---|---|
+| `condition_ast` | Optional gate. Must infer to `BOOLEAN` when present. |
+| `payload_ast` | Required data extraction tree. Server infers `payload_return_type`. |
+| `payload_return_type` | Server-computed enum: `BOOLEAN`, `VALUE`, `LIST`. Client input is ignored. |
+| `action_mapping_ast` | Optional mapping tree for AST-dependent DML actions. |
+| `source_template_uuid` | Source table that emits the event. Required and tenant-scoped. |
+| `target_template_uuid` | Target table/resource touched by the trigger. Tenant-scoped. |
+
+## Validator Rules
+
+| AST node | Inferred return type |
+|---|---|
+| `literal` bool | `BOOLEAN` |
+| `literal`, `input`, scalar non-boolean `field` | `VALUE` |
+| boolean `field` | `BOOLEAN` |
+| `field` for `relation_list`, array/list-like, `multiple`, `is_array` | `LIST` |
+| `relation_field` | `LIST` for multi relation, otherwise `VALUE` |
+| `aggregation`, `array_reduce` | `VALUE` |
+| `binary_op(gt/lt/eq)`, `logical_op` | `BOOLEAN` |
+| `string_op(regex_match)` | `BOOLEAN` |
+| arithmetic `binary_op`, `date_op`, other `string_op`, `object` | `VALUE` |
+| `query` | `LIST` |
+| `condition` | Branch type; branches must match. |
+
+Validation also checks:
+
+- `source_template_uuid` and `target_template_uuid` exist inside the same `instance_uuid`.
+- Tenant isolation is applied to SQL and Mongo lookups.
+- Cascade graph edges `source_template_uuid -> target_template_uuid` have no cycles for DML actions only (`INSERT_RECORD`, `UPDATE_RECORD`, `UPSERT_RECORD`, and legacy `mongo_*` aliases). Non-mutating system actions such as `RETURN_TO_CALLER` do not create cascade edges.
+- DML write target is defined only by `Trigger.target_template_uuid`; `action_params.target_template_uuid` is legacy input and is rejected if it differs.
+- Comparison operators reject LIST operands before save; operands must be scalar `VALUE` or `BOOLEAN`.
+- `action_name` matches `triggers/action_contracts.py`.
+- DML actions `INSERT_RECORD`, `UPDATE_RECORD`, `UPSERT_RECORD` require `action_mapping_ast`.
+
+## Core Classes
+
+| Class | File | Role |
+|---|---|---|
+| `EventReceptor` | `engine/event_receptor.py` | Captures events, builds initial scope, finds subscribed triggers. |
+| `ASTEvaluator` / `EvaluationScope` | `engine/evaluator.py` | Stateful recursive AST evaluator with `document`, `current_item`, variables, `instance_uuid`. |
+| `BatchDataLoader` | `engine/batch_loader.py` | Session cache and `$in` loader for related records and query-backed LIST payloads. |
+| `IterationLoopEngine` | `engine/iteration_engine.py` | Isolated per-item scopes for LIST payload DML. |
+| `ActionDispatcher` | `engine/action_registry.py` | Runtime contract guard and DML/system action dispatch. |
+| `TargetAtomicWriter` | `engine/atomic_writer.py` | Translates abstract operations into Mongo `bulk_write`. |
+
+## Pipelines
+
+Scalar pipeline (`VALUE` / `BOOLEAN`):
+
+1. `EventReceptor`
+2. `ASTEvaluator(condition_ast)`
+3. `ASTEvaluator(payload_ast)`
+4. `ActionDispatcher.dispatch`
+
+LIST pipeline:
+
+1. `EventReceptor`
+2. `ASTEvaluator(condition_ast)`
+3. `ASTEvaluator(payload_ast)`
+4. System action receives the full list, or DML goes through `IterationLoopEngine`
+5. `TargetAtomicWriter.flush()` performs one unordered `bulk_write`
+
+## Business Case JSON
+
+### 1. Orders -> Clients UPSERT
+
+```json
+{
+  "name": "Orders -> Clients upsert",
+  "trigger_type": "AUTOMATION",
+  "event_type": "ON_RECORD_CREATE",
+  "source_template_uuid": "<orders-template-uuid>",
+  "target_template_uuid": "<clients-template-uuid>",
+  "condition_ast": {
+    "type": "binary_op",
+    "operator": "gt",
+    "left": {"type": "field", "value": "client_phone"},
+    "right": {"type": "literal", "value": ""}
+  },
+  "payload_ast": {
+    "type": "object",
+    "fields": {
+      "phone": {"type": "field", "value": "client_phone"},
+      "name": {"type": "field", "value": "client_name"}
+    }
+  },
+  "action_name": "UPSERT_RECORD",
+  "action_params": {
+    "search_fields": ["phone"]
+  },
+  "action_mapping_ast": {
+    "type": "object",
+    "fields": {
+      "phone": {"type": "field", "value": "client_phone"},
+      "name": {"type": "field", "value": "client_name"}
+    }
+  }
+}
+```
+
+### 2. LIVE_EVAL Product Suggestions
+
+```json
+{
+  "name": "Product live suggestions",
+  "trigger_type": "LIVE_EVAL",
+  "event_type": "MANUAL",
+  "source_template_uuid": "<products-template-uuid>",
+  "target_template_uuid": "<products-template-uuid>",
+  "condition_ast": {
+    "type": "binary_op",
+    "operator": "gt",
+    "left": {"type": "input"},
+    "right": {"type": "literal", "value": ""}
+  },
+  "payload_ast": {
+    "type": "query",
+    "target_template_uuid": "<products-template-uuid>",
+    "filters": [
+      {"field": "name", "operator": "contains", "value": {"type": "input"}},
+      {"field": "quantity_left", "operator": "gt", "value": {"type": "literal", "value": 0}}
+    ],
+    "return_fields": ["name", "quantity_left"]
+  },
+  "action_name": "RETURN_TO_CALLER"
+}
+```
+
+Evaluate request:
+
+```json
+{
+  "context_data": {},
+  "manual_input": "кольцо"
+}
+```
+
+### 3. Paid Order Stock Decrement
+
+```json
+{
+  "name": "Paid order stock decrement",
+  "trigger_type": "AUTOMATION",
+  "event_type": "ON_RECORD_UPDATE",
+  "source_template_uuid": "<orders-template-uuid>",
+  "target_template_uuid": "<products-template-uuid>",
+  "condition_ast": {
+    "type": "binary_op",
+    "operator": "eq",
+    "left": {"type": "field", "value": "payment"},
+    "right": {"type": "literal", "value": "картой"}
+  },
+  "payload_ast": {"type": "field", "value": "product_list"},
+  "action_name": "UPDATE_RECORD",
+  "action_mapping_ast": {
+    "type": "object",
+    "fields": {
+      "_id": {"type": "field", "value": "current_item.target_uuid"},
+      "quantity_left": {
+        "type": "object",
+        "fields": {
+          "op": {"type": "literal", "value": "inc"},
+          "value": {
+            "type": "binary_op",
+            "operator": "multiply",
+            "left": {"type": "field", "value": "current_item.qty"},
+            "right": {"type": "literal", "value": -1}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+## Migration
+
+Recommended two-phase rollout:
+
+```bash
+alembic upgrade 20260605_0001
+# deploy and verify trigger-engine-v2 writes payload_ast
+alembic upgrade 20260605_0002
+```
+
+Migration `20260605_0001_trigger_engine_v2_stage_1.py`:
+
+- Adds `condition_ast`, `payload_ast`, `payload_return_type`, `action_mapping_ast`, `source_template_uuid`.
+- Copies legacy `ast` into `payload_ast`.
+- Sets legacy `payload_return_type` to `VALUE`.
+- Backfills `source_template_uuid` from `target_template_uuid`; orphaned legacy rows use zero UUID for operator repair.
+- Keeps old `ast` for rollback/read compatibility.
+
+Migration `20260605_0002_drop_legacy_trigger_ast.py`:
+
+- Drops old `ast` after deploy verification.
+- Downgrade recreates `ast` from `payload_ast`; split v2 metadata cannot be represented by the legacy single-AST runtime.
+
+`alembic/versions/*` is ignored in this repository. No tracked prior migrations existed on disk or in git history when this branch was authored, so `down_revision = None` in `20260605_0001` is intentional.
+
+## Runtime Guarantees
+
+- Related record reads are tenant-scoped and batched through one `$in` query per pending template group.
+- LIST DML writes are accumulated and flushed through one unordered `bulk_write`.
+- Runtime action dispatch re-checks `triggers/action_contracts.py`; mismatches raise `SystemContractViolation`.
+- DML runtime writes and cascades use `Trigger.target_template_uuid` exclusively. If legacy `action_params.target_template_uuid` is present and differs, dispatch raises `SystemContractViolation`.
+- `RecordService` lets `SystemContractViolation` propagate after the record save; the persisted create/update is acceptable, and the 500 response signals an engine/config invariant breach that stage-2 validation should have prevented. Other automation exceptions keep the existing log-and-continue behavior.
+- Cascade is rejected when depth exceeds 5 (first rejected depth = 6).
+- All Mongo reads/writes include `instance_uuid`; DML writes also include `template_uuid`.

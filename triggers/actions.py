@@ -376,8 +376,13 @@ ACTION_MAPPING: Dict[
 ] = {
     "test_action": ActionRegistry.run_test_action,
     "mongo_insert": ActionRegistry.mongo_insert,
+    "INSERT_RECORD": ActionRegistry.mongo_insert,
     "mongo_update": ActionRegistry.mongo_update,
+    "UPDATE_RECORD": ActionRegistry.mongo_update,
     "mongo_upsert": ActionRegistry.mongo_upsert,
+    "UPSERT_RECORD": ActionRegistry.mongo_upsert,
     "send_telegram_broadcast": ActionRegistry.send_telegram_broadcast,
+    "SEND_BULK_NOTIFICATION": ActionRegistry.send_telegram_broadcast,
     "create_crm_notification": ActionRegistry.create_crm_notification,
+    "SEND_NOTIFICATION": ActionRegistry.create_crm_notification,
 }

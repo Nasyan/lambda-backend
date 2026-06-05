@@ -1,9 +1,20 @@
 # triggers/schemas.py
 
 from typing import Optional, Union, Dict, Any, List
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from uuid import UUID
-from triggers.models import TriggerType, EventType
+from engine.ast import parse_ast
+from engine.exceptions.evaluator import FormulaValidationError
+from triggers.exceptions.validation import RecordValidationError
+from triggers.models import TriggerType, EventType, PayloadReturnType
 
 
 class TestActionSchema(BaseModel):
@@ -35,18 +46,21 @@ class NotificationParams(BaseModel):
 
 # Дополнительные схемы для Mongo-операций (для обеспечения строгой типизации Union)
 class MongoInsertParams(BaseModel):
-    target_template_uuid: UUID
+    model_config = ConfigDict(extra="allow")
+
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MongoUpdateParams(BaseModel):
-    target_template_uuid: UUID
+    model_config = ConfigDict(extra="allow")
+
     filter: Dict[str, Any] = Field(default_factory=dict)
     update_op: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MongoUpsertParams(BaseModel):
-    target_template_uuid: UUID
+    model_config = ConfigDict(extra="allow")
+
     search_fields: List[str]
     payload: Dict[str, Any] = Field(default_factory=dict)
 
@@ -64,12 +78,134 @@ ActionParamsType = Union[
 
 
 class TriggerCreate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "Orders -> Clients upsert",
+                    "trigger_type": "AUTOMATION",
+                    "event_type": "ON_RECORD_CREATE",
+                    "source_template_uuid": "00000000-0000-0000-0000-000000000001",
+                    "target_template_uuid": "00000000-0000-0000-0000-000000000002",
+                    "condition_ast": {
+                        "type": "binary_op",
+                        "operator": "gt",
+                        "left": {"type": "field", "value": "client_phone"},
+                        "right": {"type": "literal", "value": ""},
+                    },
+                    "payload_ast": {
+                        "type": "object",
+                        "fields": {
+                            "phone": {"type": "field", "value": "client_phone"},
+                            "name": {"type": "field", "value": "client_name"},
+                        },
+                    },
+                    "action_name": "UPSERT_RECORD",
+                    "action_params": {
+                        "search_fields": ["phone"],
+                    },
+                    "action_mapping_ast": {
+                        "type": "object",
+                        "fields": {
+                            "phone": {"type": "field", "value": "client_phone"},
+                            "name": {"type": "field", "value": "client_name"},
+                        },
+                    },
+                },
+                {
+                    "name": "Product live suggestions",
+                    "trigger_type": "LIVE_EVAL",
+                    "event_type": "MANUAL",
+                    "source_template_uuid": "00000000-0000-0000-0000-000000000003",
+                    "target_template_uuid": "00000000-0000-0000-0000-000000000003",
+                    "condition_ast": {
+                        "type": "binary_op",
+                        "operator": "gt",
+                        "left": {"type": "input"},
+                        "right": {"type": "literal", "value": ""},
+                    },
+                    "payload_ast": {
+                        "type": "query",
+                        "target_template_uuid": "00000000-0000-0000-0000-000000000003",
+                        "filters": [
+                            {
+                                "field": "name",
+                                "operator": "contains",
+                                "value": {"type": "input"},
+                            },
+                            {
+                                "field": "quantity_left",
+                                "operator": "gt",
+                                "value": {"type": "literal", "value": 0},
+                            },
+                        ],
+                        "return_fields": ["name", "quantity_left"],
+                    },
+                    "action_name": "RETURN_TO_CALLER",
+                },
+                {
+                    "name": "Paid order stock decrement",
+                    "trigger_type": "AUTOMATION",
+                    "event_type": "ON_RECORD_UPDATE",
+                    "source_template_uuid": "00000000-0000-0000-0000-000000000001",
+                    "target_template_uuid": "00000000-0000-0000-0000-000000000003",
+                    "condition_ast": {
+                        "type": "binary_op",
+                        "operator": "eq",
+                        "left": {"type": "field", "value": "payment"},
+                        "right": {"type": "literal", "value": "картой"},
+                    },
+                    "payload_ast": {"type": "field", "value": "product_list"},
+                    "action_name": "UPDATE_RECORD",
+                    "action_mapping_ast": {
+                        "type": "object",
+                        "fields": {
+                            "_id": {
+                                "type": "field",
+                                "value": "current_item.target_uuid",
+                            },
+                            "quantity_left": {
+                                "type": "object",
+                                "fields": {
+                                    "op": {"type": "literal", "value": "inc"},
+                                    "value": {
+                                        "type": "binary_op",
+                                        "operator": "multiply",
+                                        "left": {
+                                            "type": "field",
+                                            "value": "current_item.qty",
+                                        },
+                                        "right": {"type": "literal", "value": -1},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            ]
+        }
+    )
+
     name: str = Field(..., max_length=255, description="Название триггера")
     trigger_type: TriggerType = Field(default=TriggerType.LIVE_EVAL)
-    ast: Dict[str, Any] = Field(
-        ..., description="JSON структура AST дерева (условие или формула)"
+    condition_ast: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "AST условия триггера. Если задано, должно возвращать BOOLEAN."
+        ),
     )
-    target_template_uuid: Optional[UUID] = None
+    payload_ast: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "AST извлечения payload. Тип результата вычисляется сервером."
+        ),
+    )
+    action_mapping_ast: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="AST маппинга данных для экшенов, которым он нужен.",
+    )
+    source_template_uuid: UUID
+    target_template_uuid: UUID
     target_field: Optional[str] = Field(
         default=None,
         max_length=64,
@@ -81,6 +217,22 @@ class TriggerCreate(BaseModel):
     cron_expression: Optional[str] = None
     action_name: Optional[str] = None
     action_params: Optional[ActionParamsType] = None
+
+    @field_validator("condition_ast", "payload_ast", "action_mapping_ast")
+    @classmethod
+    def validate_ast_tree(cls, value, info: ValidationInfo):
+        if value is None:
+            return value
+        try:
+            parse_ast(value)
+        except (FormulaValidationError, ValidationError) as exc:
+            raise RecordValidationError(
+                field=info.field_name,
+                expected="valid AST",
+                got=value,
+                detail=str(exc),
+            ) from exc
+        return value
 
     @model_validator(mode="before")
     def validate_automation_fields(cls, values):
@@ -112,12 +264,47 @@ class TriggerCreate(BaseModel):
         return values
 
 
+class TriggerUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=255)
+    trigger_type: Optional[TriggerType] = None
+    condition_ast: Optional[Dict[str, Any]] = None
+    payload_ast: Optional[Dict[str, Any]] = None
+    action_mapping_ast: Optional[Dict[str, Any]] = None
+    source_template_uuid: Optional[UUID] = None
+    target_template_uuid: Optional[UUID] = None
+    target_field: Optional[str] = Field(default=None, max_length=64)
+    event_type: Optional[EventType] = None
+    cron_expression: Optional[str] = None
+    action_name: Optional[str] = None
+    action_params: Optional[ActionParamsType] = None
+
+    @field_validator("condition_ast", "payload_ast", "action_mapping_ast")
+    @classmethod
+    def validate_optional_ast_tree(cls, value, info: ValidationInfo):
+        if value is None:
+            return value
+        try:
+            parse_ast(value)
+        except (FormulaValidationError, ValidationError) as exc:
+            raise RecordValidationError(
+                field=info.field_name,
+                expected="valid AST",
+                got=value,
+                detail=str(exc),
+            ) from exc
+        return value
+
+
 class TriggerResponse(BaseModel):
     id: UUID
     instance_uuid: UUID
     name: str
     trigger_type: TriggerType
-    ast: Dict[str, Any]
+    condition_ast: Optional[Dict[str, Any]]
+    payload_ast: Dict[str, Any]
+    payload_return_type: PayloadReturnType
+    action_mapping_ast: Optional[Dict[str, Any]]
+    source_template_uuid: UUID
     target_template_uuid: Optional[UUID]
     target_field: Optional[str] = None
     event_type: Optional[EventType]
@@ -131,3 +318,15 @@ class TriggerResponse(BaseModel):
 
 class TriggerEvaluateRequest(BaseModel):
     context_data: Dict[str, Any]
+    manual_input: Optional[Any] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "context_data": {},
+                    "manual_input": "клавиатура",
+                }
+            ]
+        }
+    )

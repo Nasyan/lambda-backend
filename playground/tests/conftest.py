@@ -6,6 +6,44 @@ from typing import Dict, Any, Callable, Tuple
 import pytest_asyncio
 
 
+def client_upsert_trigger_payload(
+    orders_template_uuid: str,
+    clients_template_uuid: str,
+    name: str = "Авто-создание клиента при заказе",
+) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "trigger_type": "AUTOMATION",
+        "event_type": "ON_RECORD_CREATE",
+        "source_template_uuid": orders_template_uuid,
+        "target_template_uuid": clients_template_uuid,
+        "condition_ast": {
+            "type": "binary_op",
+            "operator": "gt",
+            "left": {"type": "field", "value": "client_phone"},
+            "right": {"type": "literal", "value": ""},
+        },
+        "payload_ast": {
+            "type": "object",
+            "fields": {
+                "phone": {"type": "field", "value": "client_phone"},
+                "name": {"type": "field", "value": "client_name"},
+            },
+        },
+        "action_name": "UPSERT_RECORD",
+        "action_params": {
+            "search_fields": ["phone"],
+        },
+        "action_mapping_ast": {
+            "type": "object",
+            "fields": {
+                "phone": {"type": "field", "value": "client_phone"},
+                "name": {"type": "field", "value": "client_name"},
+            },
+        },
+    }
+
+
 @pytest.fixture
 def template_payload_factory() -> Callable[..., Dict[str, Any]]:
     """Фабрика для генерации адаптивной полезной нагрузки шаблона (low-code таблицы)."""
@@ -82,17 +120,19 @@ def create_test_trigger():
         trigger_payload = {
             "name": name,
             "trigger_type": "AUTOMATION",
+            "source_template_uuid": template_uuid,
             "target_template_uuid": template_uuid,
             "target_field": "email",
             "event_type": "ON_RECORD_UPDATE",
-            "action_name": "SEND_WEBHOOK",
-            "action_params": {"url": "https://hooks.pravaon.by/catch"},
-            "ast": {
+            "action_name": "test_action",
+            "action_params": {"required_text": "schema dependency marker"},
+            "condition_ast": {
                 "type": "binary_op",
                 "operator": "eq",
                 "left": {"type": "field", "value": "email"},
                 "right": {"type": "literal", "value": "test@example.com"},
             },
+            "payload_ast": {"type": "field", "value": "email"},
         }
 
         response = await test_client.post(
@@ -312,28 +352,7 @@ async def setup_crm_with_automation(test_client, setup_crm_environment):
     clients_id = env["clients_template_uuid"]
     orders_id = env["orders_template_uuid"]
 
-    # Конфигурируем триггер автоматического апсерта клиента
-    trigger_payload = {
-        "name": "Авто-создание клиента при заказе",
-        "trigger_type": "AUTOMATION",
-        "event_type": "ON_RECORD_CREATE",
-        "target_template_uuid": orders_id,
-        "action_name": "mongo_upsert",
-        "action_params": {
-            "target_template_uuid": clients_id,
-            "search_fields": ["phone"],
-            "payload": {
-                "phone": "{{data.client_phone}}",
-                "name": "{{data.client_name}}",
-            },
-        },
-        "ast": {
-            "type": "binary_op",
-            "operator": "gt",
-            "left": {"type": "field", "value": "client_phone"},
-            "right": {"type": "literal", "value": ""},
-        },
-    }
+    trigger_payload = client_upsert_trigger_payload(orders_id, clients_id)
 
     create_trigger_url = f"/instances/{instance_uuid}/triggers/"
     trigger_resp = await test_client.post(
@@ -358,28 +377,7 @@ async def setup_crm_with_automation_upgrade(test_client, setup_crm_environment_u
     clients_id = env["clients_template_uuid"]
     orders_id = env["orders_template_uuid"]
 
-    # Конфигурируем триггер автоматического апсерта клиента
-    trigger_payload = {
-        "name": "Авто-создание клиента при заказе",
-        "trigger_type": "AUTOMATION",
-        "event_type": "ON_RECORD_CREATE",
-        "target_template_uuid": orders_id,
-        "action_name": "mongo_upsert",
-        "action_params": {
-            "target_template_uuid": clients_id,
-            "search_fields": ["phone"],
-            "payload": {
-                "phone": "{{data.client_phone}}",
-                "name": "{{data.client_name}}",
-            },
-        },
-        "ast": {
-            "type": "binary_op",
-            "operator": "gt",
-            "left": {"type": "field", "value": "client_phone"},
-            "right": {"type": "literal", "value": ""},
-        },
-    }
+    trigger_payload = client_upsert_trigger_payload(orders_id, clients_id)
 
     create_trigger_url = f"/instances/{instance_uuid}/triggers/"
     trigger_resp = await test_client.post(
@@ -468,28 +466,10 @@ async def setup_crm_dynamic_cost_and_trigger(test_client, create_test_environmen
     )
     orders_template_uuid = orders_resp.json()["_id"]
 
-    # 4. ТРИГГЕР: АВТО-UPSERT КЛИЕНТА
-    trigger_payload = {
-        "name": "Авто-создание клиента при заказе",
-        "trigger_type": "AUTOMATION",
-        "event_type": "ON_RECORD_CREATE",
-        "target_template_uuid": orders_template_uuid,
-        "action_name": "mongo_upsert",
-        "action_params": {
-            "target_template_uuid": clients_template_uuid,
-            "search_fields": ["phone"],
-            "payload": {
-                "phone": "{{data.client_phone}}",
-                "name": "{{data.client_name}}",
-            },
-        },
-        "ast": {
-            "type": "binary_op",
-            "operator": "gt",
-            "left": {"type": "field", "value": "client_phone"},
-            "right": {"type": "literal", "value": ""},
-        },
-    }
+    trigger_payload = client_upsert_trigger_payload(
+        orders_template_uuid,
+        clients_template_uuid,
+    )
     await test_client.post(
         f"/instances/{instance_uuid}/triggers/", json=trigger_payload, headers=headers
     )

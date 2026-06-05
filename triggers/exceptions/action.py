@@ -87,3 +87,21 @@ class AutomationExecutionError(AutomationDomainException):
             msg = self.message
 
         super().__init__(message=msg, details=details)
+
+
+class SystemContractViolation(AutomationDomainException):
+    """
+    Invariant breach in runtime action dispatch.
+    Stage-2 validation should prevent this path; if it happens, it is a server bug.
+    """
+
+    error_code = "SYSTEM_CONTRACT_VIOLATION"
+    message = "Нарушен системный контракт исполнения триггера."
+
+    def __init__(self, action_name: str, expected: str, got: str):
+        details = {
+            "action_name": action_name,
+            "expected": expected,
+            "got": got,
+        }
+        super().__init__(message=self.message, details=details)

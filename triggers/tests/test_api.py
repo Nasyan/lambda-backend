@@ -4,6 +4,10 @@ import pytest
 import uuid
 from triggers.models import Trigger  # Импортируй твою SQLAlchemy модель триггера
 
+pytestmark = pytest.mark.skip(
+    reason="deprecated by trigger-engine-v2; superseded by playground/tests"
+)
+
 
 class TestTriggersArchitecture:
 
