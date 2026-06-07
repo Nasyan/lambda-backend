@@ -1,6 +1,6 @@
 # core/schemas/template.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -42,8 +42,7 @@ class TemplateCreateRequest(BaseModel):
         description="JSON-схема, описывающая поля таблицы (их типы, обязательность и т.д.)",
     )
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class TemplateResponse(BaseModel):

@@ -3,12 +3,12 @@
 from typing import List, Dict, Any
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
 
 from policy.models import StorefrontPolicies
+from policy.repository import PolicyRepository
 from policy.schemas import PolicyCreate, PolicyUpdate
 from core.services.template import TemplateService
-from engine.integrity import SchemaIntegrityValidator
+from engine.schema_rules import NoCodeSchemaValidator
 
 # Импортируем наши профессиональные доменные ошибки слоя политик
 from policy.exceptions.service import (
@@ -22,24 +22,18 @@ class PolicyAdminService:
     def __init__(self, template_service: TemplateService, db_session: AsyncSession):
         self.template_service = template_service
         self.db = db_session
+        self.repo = PolicyRepository(db_session)
 
     async def _get_template_schema_by_name(
         self, instance_uuid: UUID, template_name: str
     ) -> Dict[str, Any]:
-        """Вспомогательный метод для получения схемы Mongo по текстовому имени шаблона."""
-        templates = await self.template_service.get_all_templates(
-            instance_uuid=instance_uuid
+        """Получает схему Mongo по имени шаблона (точечный запрос, не обход всех таблиц)."""
+        template = await self.template_service.find_by_name(
+            instance_uuid=instance_uuid, name=template_name
         )
-        for tpl in templates:
-            name = tpl.name if hasattr(tpl, "name") else tpl.get("name")
-            if name == template_name:
-                return (
-                    tpl.schema_definition
-                    if hasattr(tpl, "schema_definition")
-                    else tpl.get("schema", {})
-                )
+        if template:
+            return template.get("schema", {})
 
-        # Заменяем сырой HTTPException(400) на типизированную ошибку отсутствия таблицы
         raise PolicyTemplateNotFoundError(
             instance_uuid=instance_uuid,
             template_name=template_name,
@@ -56,16 +50,12 @@ class PolicyAdminService:
 
         # SchemaDependencyError уже является профессиональным исключением,
         # унаследованным от BaseAppException. Пускаем его наверх без перехвата в HTTPException.
-        SchemaIntegrityValidator.validate_storefront_policy(
-            schema, payload.model_dump()
-        )
+        NoCodeSchemaValidator.validate_storefront_policy(schema, payload.model_dump())
 
         # 2. Проверяем, нет ли уже дублирующей политики для этого шаблона
-        existing_stmt = select(StorefrontPolicies).where(
-            StorefrontPolicies.instance_uuid == instance_uuid,
-            StorefrontPolicies.template_name == payload.template_name,
+        existing = await self.repo.get_by_template_name(
+            instance_uuid, payload.template_name
         )
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
         if existing:
             raise PolicyAlreadyExistsError(
                 instance_uuid=instance_uuid,
@@ -82,26 +72,18 @@ class PolicyAdminService:
             write_mask=payload.write_mask,
             defaults=payload.defaults,
         )
-        self.db.add(policy)
+        self.repo.add(policy)
         await self.db.commit()
         await self.db.refresh(policy)
         return policy
 
     async def get_policies_list(self, instance_uuid: UUID) -> List[StorefrontPolicies]:
-        stmt = select(StorefrontPolicies).where(
-            StorefrontPolicies.instance_uuid == instance_uuid
-        )
-        result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        return await self.repo.list(instance_uuid)
 
     async def update_policy(
         self, instance_uuid: UUID, policy_id: UUID, payload: PolicyUpdate
     ) -> StorefrontPolicies:
-        stmt = select(StorefrontPolicies).where(
-            StorefrontPolicies.id == policy_id,
-            StorefrontPolicies.instance_uuid == instance_uuid,
-        )
-        policy = (await self.db.execute(stmt)).scalar_one_or_none()
+        policy = await self.repo.get_by_id(instance_uuid, policy_id)
         if not policy:
             raise PolicyNotFoundError(instance_uuid=instance_uuid, policy_id=policy_id)
 
@@ -132,7 +114,7 @@ class PolicyAdminService:
         }
 
         # Валидируем целостность схемы, исключение SchemaDependencyError летит наверх само
-        SchemaIntegrityValidator.validate_storefront_policy(schema, updated_data)
+        NoCodeSchemaValidator.validate_storefront_policy(schema, updated_data)
 
         # Применяем изменения
         if payload.read_mask is not None:
@@ -149,11 +131,7 @@ class PolicyAdminService:
         return policy
 
     async def delete_policy(self, instance_uuid: UUID, policy_id: UUID) -> None:
-        stmt = delete(StorefrontPolicies).where(
-            StorefrontPolicies.id == policy_id,
-            StorefrontPolicies.instance_uuid == instance_uuid,
-        )
-        result = await self.db.execute(stmt)
-        if result.rowcount == 0:
+        deleted_count = await self.repo.delete_by_id(instance_uuid, policy_id)
+        if deleted_count == 0:
             raise PolicyNotFoundError(instance_uuid=instance_uuid, policy_id=policy_id)
         await self.db.commit()

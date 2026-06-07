@@ -3,16 +3,14 @@
 from uuid import UUID
 from redisdb.utils import generate_key
 from config import INVITE_PREFIX, USER_INVITE_PREFIX, JOIN_PREFIX
-from config import SENDER_EMAIL, EMAIL_PASSWORD
 from typing import Tuple
-import random
 from datetime import datetime, timezone, timedelta
 from fastapi import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from jsonwebtoken.utils import encode_jwt, decode_jwt
-from workers.email_tasks import send_email
+from users.services.verification_notifier import RegistrationVerificationNotifier
 from sqlalchemy.future import select
 from users.models import Users, UserRole
 
@@ -89,7 +87,7 @@ class AuthRedisService:
         """Сохраняет код верификации в связке с ключом инвайта."""
         join_key = generate_key(prefix=JOIN_PREFIX, sub=email)
         redis_value = f"{code}:{invite_key}"
-        await self.redis.setex(join_key, 900, redis_value)
+        await self.redis.set(name=join_key, ex=900, value=redis_value)
 
     async def verify_and_delete_code(self, email: str, input_code: str) -> None:
         """Проверяет код. Если верный — удаляет его и инвайт из базы."""
@@ -155,17 +153,14 @@ class AuthService:
 
         await self.db.commit()
 
-        verification_code = str(random.randint(100000, 999999))
+        verification_code = RegistrationVerificationNotifier.generate_code()
         await self.redis_auth.save_verification_code(
             payload.email, verification_code, matched_redis_key
         )
 
-        send_email.send(
-            sender_email=SENDER_EMAIL,
-            password=EMAIL_PASSWORD,
-            receiver_email=payload.email,
-            subject="Подтверждение регистрации",
-            body=f"Привет, {payload.name}! Ваш код активации аккаунта: {verification_code}. Код действует 15 минут.",
+        # Побочное действие (email) вынесено в отдельный нотификатор (task3, ГЗ-1 Этап 2)
+        RegistrationVerificationNotifier.send_code(
+            email=payload.email, name=payload.name, code=verification_code
         )
 
     async def verify_registration(self, payload) -> Users:
@@ -193,17 +188,16 @@ class AuthService:
         await self.redis_auth.check_rate_limit(payload.email)
         matched_redis_key = await self.redis_auth.find_active_invite_key(payload.email)
 
-        new_verification_code = str(random.randint(100000, 999999))
+        new_verification_code = RegistrationVerificationNotifier.generate_code()
         await self.redis_auth.save_verification_code(
             payload.email, new_verification_code, matched_redis_key
         )
 
-        send_email.send(
-            sender_email=SENDER_EMAIL,
-            password=EMAIL_PASSWORD,
-            receiver_email=payload.email,
-            subject="Повторное подтверждение регистрации",
-            body=f"Привет, {user.name}! Ваш новый код активации аккаунта: {new_verification_code}. Код действует 15 минут.",
+        RegistrationVerificationNotifier.send_code(
+            email=payload.email,
+            name=user.name,
+            code=new_verification_code,
+            repeat=True,
         )
 
     async def authenticate_and_issue_tokens(

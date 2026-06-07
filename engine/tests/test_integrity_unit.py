@@ -3,7 +3,8 @@
 import pytest
 import logging
 from uuid import uuid4
-from engine.integrity import SchemaIntegrityValidator
+from engine.schema_rules import NoCodeSchemaValidator
+from core.services.template_integrity import TemplateIntegrityService
 from engine.exceptions.integrity import SchemaDependencyError, SchemaValidationError
 from users.models import Instances  # Импортируем модель инстанса для сохранения FK
 from policy.models import StorefrontPolicies
@@ -46,7 +47,7 @@ class TestSchemaIntegrityCascadeUnit:
         await db_session.commit()
 
         with pytest.raises(SchemaDependencyError) as exc_info:
-            await SchemaIntegrityValidator.check_field_mutation_safe(
+            await TemplateIntegrityService.check_field_mutation_safe(
                 instance_uuid=instance_uuid,
                 template_uuid=template_uuid,
                 template_name=template_name,
@@ -74,7 +75,7 @@ class TestSchemaIntegrityCascadeUnit:
             "read_filters": {},
         }
 
-        SchemaIntegrityValidator.validate_storefront_policy(schema, valid_policy)
+        NoCodeSchemaValidator.validate_storefront_policy(schema, valid_policy)
 
         # 2. Этот паттерн должен упасть (wrong_root не существует в схеме)
         invalid_policy = {
@@ -85,7 +86,7 @@ class TestSchemaIntegrityCascadeUnit:
 
         # Меняем ожидаемое исключение на SchemaValidationError
         with pytest.raises(SchemaValidationError) as exc_info:
-            SchemaIntegrityValidator.validate_storefront_policy(schema, invalid_policy)
+            NoCodeSchemaValidator.validate_storefront_policy(schema, invalid_policy)
 
         exception = exc_info.value
 
@@ -123,7 +124,7 @@ class TestSchemaIntegrityCascadeUnit:
             "false_expr": {"type": "field", "value": "fallback_column"},
         }
 
-        used_fields = SchemaIntegrityValidator.extract_used_fields(complex_ast)
+        used_fields = NoCodeSchemaValidator.extract_used_fields(complex_ast)
 
         assert "status" in used_fields
         assert "attributes.Active" in used_fields

@@ -1,6 +1,6 @@
 # store/schemas.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Dict, Any, List
 
 
@@ -22,8 +22,7 @@ class StorefrontRecordResponse(BaseModel):
     id: str = Field(..., alias="_id")
     data: Dict[str, Any]
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class StorefrontPaginatedRecordsResponse(BaseModel):

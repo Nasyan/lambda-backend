@@ -3,12 +3,15 @@
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from fastapi import HTTPException
 
 from core.services.template import TemplateService
 from mongo.record import RecordRepository
 from policy.models import StorefrontPolicies
+from policy.repository import PolicyRepository
+from store.exceptions import (
+    StorefrontTemplateNotFoundError,
+    StorefrontEmptyWritePayloadError,
+)
 
 
 class StorefrontService:
@@ -21,16 +24,14 @@ class StorefrontService:
         self.template_service = template_service
         self.record_repo = record_repo
         self.pg_session = pg_session
+        self.policy_repo = PolicyRepository(pg_session)
 
     async def _get_policy(
         self, instance_uuid: UUID, template_name: str
     ) -> StorefrontPolicies:
-        query = select(StorefrontPolicies).where(
-            StorefrontPolicies.instance_uuid == instance_uuid,
-            StorefrontPolicies.template_name == template_name,
+        policy = await self.policy_repo.get_by_template_name(
+            instance_uuid, template_name
         )
-        result = await self.pg_session.execute(query)
-        policy = result.scalar_one_or_none()
         if not policy:
             # 🔥 Добавлен пустой словарь defaults для fallback'а
             return StorefrontPolicies(
@@ -41,17 +42,14 @@ class StorefrontService:
     async def _resolve_template_uuid(
         self, instance_uuid: str, template_name: str
     ) -> Optional[str]:
-        """Разрешает текстовое ЧПУ-имя шаблона в его UUID идентификатор."""
-        templates = await self.template_service.get_all_templates(
-            instance_uuid=UUID(instance_uuid)
+        """Разрешает текстовое ЧПУ-имя шаблона в его UUID (точечный запрос, не обход всех таблиц)."""
+        template = await self.template_service.find_by_name(
+            instance_uuid=UUID(instance_uuid), name=template_name
         )
-        for tpl in templates:
-            name = tpl.name if hasattr(tpl, "name") else tpl.get("name")
-            tpl_id = tpl.id if hasattr(tpl, "id") else (tpl.get("_id") or tpl.get("id"))
-
-            if name == template_name:
-                return str(tpl_id)
-        return None
+        if not template:
+            return None
+        tpl_id = template.get("_id") or template.get("id")
+        return str(tpl_id) if tpl_id else None
 
     def _apply_mask(self, data: Dict[str, Any], mask: List[str]) -> Dict[str, Any]:
         """Оставляет в словаре только те ключи, которые разрешены маской."""
@@ -65,7 +63,9 @@ class StorefrontService:
         str_instance = str(instance_uuid)
         template_uuid = await self._resolve_template_uuid(str_instance, template_name)
         if not template_uuid:
-            raise HTTPException(status_code=404, detail="Таблица не найдена")
+            raise StorefrontTemplateNotFoundError(
+                instance_uuid=instance_uuid, template_name=template_name
+            )
 
         policy = await self._get_policy(instance_uuid, template_name)
         template = await self.template_service.get_template(
@@ -93,7 +93,9 @@ class StorefrontService:
         str_instance = str(instance_uuid)
         template_uuid = await self._resolve_template_uuid(str_instance, template_name)
         if not template_uuid:
-            raise HTTPException(status_code=404, detail="Таблица не найдена")
+            raise StorefrontTemplateNotFoundError(
+                instance_uuid=instance_uuid, template_name=template_name
+            )
 
         policy = await self._get_policy(instance_uuid, template_name)
 
@@ -134,7 +136,9 @@ class StorefrontService:
         str_instance = str(instance_uuid)
         template_uuid = await self._resolve_template_uuid(str_instance, template_name)
         if not template_uuid:
-            raise HTTPException(status_code=404, detail="Таблица не найдена")
+            raise StorefrontTemplateNotFoundError(
+                instance_uuid=instance_uuid, template_name=template_name
+            )
 
         policy = await self._get_policy(instance_uuid, template_name)
 
@@ -152,9 +156,6 @@ class StorefrontService:
 
         # Изменили проверку: если нет ни пользовательских данных, ни дефолтов — тогда ошибка
         if not cleaned_data:
-            raise HTTPException(
-                status_code=400,
-                detail="Нет разрешенных полей для записи или значений по умолчанию",
-            )
+            raise StorefrontEmptyWritePayloadError(template_name=template_name)
 
         return template_uuid, cleaned_data

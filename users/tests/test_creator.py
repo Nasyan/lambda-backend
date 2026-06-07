@@ -5,9 +5,7 @@ from uuid import uuid4
 from users.models import UserPermissions, Users, UserRole, Instances
 from redisdb.utils import generate_key
 from config import USER_INVITE_PREFIX
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.future import select
-from sqlalchemy.orm import joinedload
 
 
 @pytest.mark.asyncio
@@ -132,8 +130,9 @@ class TestCreatorInviteManagement:
 
         # 2. Создаем обычного пользователя (Сотрудника) внутри этого же инстанса
         emp_data = user_factory()
+        employee_uuid = uuid4()
         employee = Users(
-            uuid=uuid4(),
+            uuid=employee_uuid,
             name=emp_data["name"],
             email=emp_data["email"],
             instance_id=test_instance.uuid,
@@ -145,33 +144,23 @@ class TestCreatorInviteManagement:
         await db_session.commit()
 
         # 3. Делаем запрос на повышение
-        payload = {"user_uuid": str(employee.uuid)}
+        payload = {"user_uuid": str(employee_uuid)}
         response = await client.post("/creator/promote-to-creator/", json=payload)
 
         # Проверяем ответ эндпоинта
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
-        # Создаем временную чистую сессию, чтобы прочитать свежий коммит из эндпоинта
-        check_engine = create_async_engine(db_session.bind.url, echo=False)
-        CheckSession = async_sessionmaker(check_engine, expire_on_commit=False)
+        # 4. Проверяем базу асинхронно через refresh без expire_all()
+        await db_session.refresh(employee, attribute_names=["role"])
 
-        async with CheckSession() as check_session:
-            stmt = (
-                select(Users)
-                .where(Users.uuid == employee.uuid)
-                .options(joinedload(Users.permissions))
-            )
-            res = await check_session.execute(stmt)
-            updated_user = res.scalar_one_or_none()
+        stmt = select(UserPermissions).where(UserPermissions.user_uuid == employee_uuid)
+        res = await db_session.execute(stmt)
+        perms = res.scalar_one_or_none()
 
-            assert updated_user is not None
-            assert updated_user.role == UserRole.CREATOR
-
-            assert updated_user.permissions is not None
-            assert updated_user.permissions.allowed_tools == ["all"]
-
-        await check_engine.dispose()
+        assert employee.role == UserRole.CREATOR
+        assert perms is not None
+        assert perms.allowed_tools == ["all"]
 
     async def test_promote_to_creator_foreign_instance_forbidden(
         self, auth_client, db_session, user_factory
@@ -267,8 +256,9 @@ class TestCreatorInviteManagement:
 
         # 2. Создаем ВТОРОГО креатора в этом же инстансе, которого будем понижать
         target_data = user_factory()
+        target_uuid = uuid4()
         target_user = Users(
-            uuid=uuid4(),
+            uuid=target_uuid,
             name=target_data["name"],
             email=target_data["email"],
             instance_id=test_instance.uuid,
@@ -279,42 +269,23 @@ class TestCreatorInviteManagement:
         db_session.add(target_user)
 
         # Даем ему права "all"
-        target_perms = UserPermissions(
-            user_uuid=target_user.uuid, allowed_tools=["all"]
-        )
+        target_perms = UserPermissions(user_uuid=target_uuid, allowed_tools=["all"])
         db_session.add(target_perms)
         await db_session.commit()
 
         # 3. Делаем запрос на понижение
-        payload = {"user_uuid": str(target_user.uuid)}
+        payload = {"user_uuid": str(target_uuid)}
         response = await client.post("/creator/demote-to-user/", json=payload)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
-        # 4. Проверяем базу через чистую транзакцию
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-        from sqlalchemy.future import select
-        from sqlalchemy.orm import joinedload
+        # 4. Вместо expire_all() явно и асинхронно обновляем роль юзера и запись пермишенов
+        await db_session.refresh(target_user, attribute_names=["role"])
+        await db_session.refresh(target_perms, attribute_names=["allowed_tools"])
 
-        check_engine = create_async_engine(db_session.bind.url, echo=False)
-        CheckSession = async_sessionmaker(check_engine, expire_on_commit=False)
-
-        async with CheckSession() as check_session:
-            stmt = (
-                select(Users)
-                .where(Users.uuid == target_user.uuid)
-                .options(joinedload(Users.permissions))
-            )
-            res = await check_session.execute(stmt)
-            updated_user = res.scalar_one_or_none()
-
-            assert updated_user is not None
-            assert updated_user.role == UserRole.USER  # Стал обычным юзером
-            assert updated_user.permissions is not None
-            assert updated_user.permissions.allowed_tools == []  # Права очистились!
-
-        await check_engine.dispose()
+        assert target_user.role == UserRole.USER  # Стал обычным юзером
+        assert target_perms.allowed_tools == []  # Права очистились!
 
     async def test_demote_to_user_already_regular_user(
         self, auth_client, db_session, user_factory
@@ -389,8 +360,9 @@ class TestCreatorInviteManagement:
 
         # Создаем обычного USER
         emp_data = user_factory()
+        employee_uuid = uuid4()
         employee = Users(
-            uuid=uuid4(),
+            uuid=employee_uuid,
             name=emp_data["name"],
             email=emp_data["email"],
             instance_id=test_instance.uuid,
@@ -403,7 +375,7 @@ class TestCreatorInviteManagement:
 
         # Отправляем запрос на выдачу прав для 'notes' и 'workflow'
         payload = {
-            "user_uuid": str(employee.uuid),
+            "user_uuid": str(employee_uuid),
             "allowed_tools": ["notes", "workflow"],
         }
         response = await client.post("/creator/update-permissions/", json=payload)
@@ -412,31 +384,13 @@ class TestCreatorInviteManagement:
         assert response.json()["status"] == "success"
         assert set(response.json()["allowed_tools"]) == {"notes", "workflow"}
 
-        # Проверяем в базе через изолированную чистую сессию
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-        from sqlalchemy.future import select
-        from sqlalchemy.orm import joinedload
+        # Проверяем в базе асинхронно через прямой SELECT, минуя кеш сессии
+        stmt = select(UserPermissions).where(UserPermissions.user_uuid == employee_uuid)
+        res = await db_session.execute(stmt)
+        updated_perms = res.scalar_one_or_none()
 
-        check_engine = create_async_engine(db_session.bind.url, echo=False)
-        CheckSession = async_sessionmaker(check_engine, expire_on_commit=False)
-
-        async with CheckSession() as check_session:
-            stmt = (
-                select(Users)
-                .where(Users.uuid == employee.uuid)
-                .options(joinedload(Users.permissions))
-            )
-            res = await check_session.execute(stmt)
-            updated_user = res.scalar_one_or_none()
-
-            assert updated_user is not None
-            assert updated_user.permissions is not None
-            # Сортируем списки для надежного сравнения массивов
-            assert sorted(updated_user.permissions.allowed_tools) == sorted(
-                ["notes", "workflow"]
-            )
-
-        await check_engine.dispose()
+        assert updated_perms is not None
+        assert sorted(updated_perms.allowed_tools) == sorted(["notes", "workflow"])
 
     async def test_update_permissions_foreign_instance_forbidden(
         self, auth_client, db_session, user_factory
@@ -513,22 +467,9 @@ class TestCreatorInviteManagement:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
-        # Проверяем изменения в базе данных через чистую транзакцию
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-        from sqlalchemy.future import select
-
-        check_engine = create_async_engine(db_session.bind.url, echo=False)
-        CheckSession = async_sessionmaker(check_engine, expire_on_commit=False)
-
-        async with CheckSession() as check_session:
-            stmt = select(Users).where(Users.uuid == employee.uuid)
-            res = await check_session.execute(stmt)
-            updated_user = res.scalar_one_or_none()
-
-            assert updated_user is not None
-            assert updated_user.active is False  # Пользователь успешно забанен!
-
-        await check_engine.dispose()
+        # Проверяем изменения асинхронно через refresh
+        await db_session.refresh(employee, attribute_names=["active"])
+        assert employee.active is False  # Пользователь успешно забанен!
 
     async def test_deactivate_myself_bad_request(self, auth_client, db_session):
         """
@@ -626,20 +567,6 @@ class TestCreatorInviteManagement:
         # 4. Проверяем, что система жестко отбила запрос по правам доступа
         assert response.status_code == 403
 
-        # 5. Дополнительно проверяем базу данных через чистую транзакцию,
-        # чтобы убедиться, что статус пользователя действительно НЕ изменился.
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-        from sqlalchemy.future import select
-
-        check_engine = create_async_engine(db_session.bind.url, echo=False)
-        CheckSession = async_sessionmaker(check_engine, expire_on_commit=False)
-
-        async with CheckSession() as check_session:
-            stmt = select(Users).where(Users.uuid == target_employee.uuid)
-            res = await check_session.execute(stmt)
-            db_user = res.scalar_one_or_none()
-
-            assert db_user is not None
-            assert db_user.active is True  # Он остался активным, бан не прошел
-
-        await check_engine.dispose()
+        # 5. Проверяем базу данных через асинхронный refresh
+        await db_session.refresh(target_employee, attribute_names=["active"])
+        assert target_employee.active is True  # Он остался активным, бан не прошел

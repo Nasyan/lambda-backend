@@ -1,6 +1,6 @@
 # core/schemas/record.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Dict, Any, Optional, List
 
 
@@ -23,8 +23,7 @@ class RecordResponse(BaseModel):
     updated_by: Optional[str] = None
     version: int
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class PaginatedRecordsResponse(BaseModel):

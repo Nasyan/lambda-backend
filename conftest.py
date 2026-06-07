@@ -1,10 +1,43 @@
+# conftest.py
+
+"""Корневая тестовая инфраструктура (task3, ГЗ-3 Фаза 1).
+
+Архитектура:
+- Подключения (scope=session): postgres_engine / mongo_client / redis_pool
+  создаются ОДИН раз за прогон. Схема Postgres создаётся один раз —
+  никаких drop_all/create_all на каждый тест.
+- Изоляция данных (scope=function): db_session и приложение работают в ОДНОЙ
+  внешней транзакции на выделенном соединении (savepoint-режим SQLAlchemy);
+  после теста — ROLLBACK. Mongo чистится быстрым delete_many по коллекциям
+  (база уникальна per xdist-воркер). Redis — flushdb лёгких тестовых БД.
+- Изолированные клиенты: test_client переопределяет ТОЛЬКО get_db и
+  get_mongo_db; S3 подмешивается отдельной фикстурой minio_client.
+  Чистая логика (engine/tests, юниты AST) не запрашивает эти фикстуры и
+  не поднимает ни Postgres, ни Redis.
+- Конкурентность: для тестов гонок есть concurrent_test_client — реальные
+  независимые соединения из пула (gather работает), изоляция через TRUNCATE
+  после теста.
+
+Требование: pytest-asyncio >= 0.24 (loop_scope). Все async-тесты автоматически
+переводятся в session-петлю (pytest_collection_modifyitems), чтобы
+session-scoped движки и function-тесты жили в одном event loop —
+иначе asyncpg ломается на кросс-loop соединениях.
+"""
+
 import asyncio
+import os
 import sys
+
 import aioboto3
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from sqlalchemy.ext.compiler import compiles
@@ -12,22 +45,46 @@ from sqlalchemy.schema import DropTable
 
 from database.db import Base, get_db
 from mongo.db import get_mongo_db
-from main import app, init_redis
+from main import app
+
+# --- Импортируем конфиг целиком под удобным коротким алиасом ---
 import config as cfg
+
 from faker import Faker
 from minio.db import get_s3_client
 from uuid import uuid4
 
-
 from users.models import Users, Instances, UserRole, UserPermissions
-
 from jsonwebtoken.utils import encode_jwt
 
 fake = Faker()
 
+# Собираем URL-ы через cfg
+postgres_url = (
+    f"postgresql+asyncpg://{cfg.POSTGRES_DB_USER}:{cfg.POSTGRES_DB_PASSWORD}@"
+    f"{cfg.POSTGRES_TEST_DB_HOST}:{cfg.POSTGRES_TEST_DB_PORT}/{cfg.POSTGRES_TEST_DB_NAME}"
+)
+
+mongo_test_url = (
+    f"mongodb://{cfg.ADMIN_USERNAME}:{cfg.ADMIN_PASSWORD}@"
+    f"{cfg.MONGO_HOST}:{cfg.MONGO_TEST_PORT}/?authSource=admin"
+)
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def pytest_collection_modifyitems(items):
+    """Все async-тесты — в session-петлю (общую с session-scoped движками)."""
+    try:
+        from pytest_asyncio import is_async_test
+    except ImportError:  # pragma: no cover - очень старый pytest-asyncio
+        return
+
+    session_marker = pytest.mark.asyncio(loop_scope="session")
+    for item in items:
+        if is_async_test(item):
+            item.add_marker(session_marker, append=False)
 
 
 # 🔥 ПРАВИЛЬНЫЙ ХУК: Переопределяем компиляцию DROP TABLE для всех диалектов в тестах
@@ -37,78 +94,186 @@ def compile_drop_table_cascade(element, compiler, **kw):
     return compiler.visit_drop_table(element) + " CASCADE"
 
 
-postgres_url = (
-    f"postgresql+asyncpg://{cfg.POSTGRES_DB_USER}:{cfg.POSTGRES_DB_PASSWORD}@"
-    f"{cfg.POSTGRES_TEST_DB_HOST}:{cfg.POSTGRES_TEST_DB_PORT}/{cfg.POSTGRES_TEST_DB_NAME}"
-)
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
 
 
-@pytest_asyncio.fixture(scope="function")
-async def test_client():
-    # --- НАСТРОЙКА MONGODB ---
-    mongo_test_url = (
-        f"mongodb://{cfg.ADMIN_USERNAME}:{cfg.ADMIN_PASSWORD}@"
-        f"{cfg.MONGO_HOST}:{cfg.MONGO_TEST_PORT}/?authSource=admin"
-    )
-    mongo_client = AsyncIOMotorClient(mongo_test_url)
+# =============================================================================
+# ПОДКЛЮЧЕНИЯ — scope=session (создаются один раз за прогон)
+# =============================================================================
 
-    db_name = cfg.MONGO_DB_NAME
-    if db_name not in ["admin", "local", "config"]:
-        await mongo_client.drop_database(db_name)
 
-    test_mongo_db = mongo_client[db_name]
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def postgres_engine():
+    """Движок Postgres на всю сессию. Схема создаётся ОДИН раз."""
+    engine = create_async_engine(postgres_url, echo=False)
 
-    # --- НАСТРОЙКА REDIS ---
-    await init_redis()
-
-    # --- НАСТРОЙКА POSTGRES ---
-    test_engine = create_async_engine(postgres_url, echo=False)
-
-    async with test_engine.begin() as conn:
-        # Теперь drop_all выполнит команды вида: DROP TABLE "users" CASCADE;
-        # Любые связи из неимпортированных в текущем тесте модулей будут проигнорированы Постгресом.
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
-    SessionLocal = async_sessionmaker(
-        test_engine,
-        expire_on_commit=False,
-    )
+    yield engine
+    await engine.dispose()
 
-    # --- ЗАВИСИМОСТИ-ОВЕРРАЙДЫ ---
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def mongo_client():
+    """Клиент Mongo на всю сессию; тестовая база своя на каждого xdist-воркера."""
+    client = AsyncIOMotorClient(mongo_test_url)
+
+    db_name = _mongo_db_name()
+    if db_name not in ["admin", "local", "config"]:
+        await client.drop_database(db_name)
+
+    yield client
+    client.close()
+
+
+def _mongo_db_name() -> str:
+    return f"{cfg.MONGO_TEST_NAME}_{_XDIST_WORKER}"
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def redis_pool():
+    """Инициализация тестовых redis-клиентов приложения один раз за сессию."""
+    from redisdb.utils import init_redis, redis_clients
+
+    # 1. Сохраняем оригинальный dev-порт
+    original_port = cfg.REDIS_PORT
+
+    # 2. Подменяем порт в конфиге на тестовый перед инициализацией
+    if cfg.REDIS_TEST_PORT:
+        cfg.REDIS_PORT = cfg.REDIS_TEST_PORT
+
+    # 3. Запускаем инициализацию. Функция заглянет в cfg.REDIS_PORT
+    await init_redis()
+
+    yield redis_clients
+
+    # 4. После тестов возвращаем dev-порт
+    cfg.REDIS_PORT = original_port
+
+
+# =============================================================================
+# ИЗОЛЯЦИЯ ДАННЫХ — scope=function (транзакция + ROLLBACK, быстрые очистки)
+# =============================================================================
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def pg_session_factory(postgres_engine):
+    """Соединение с внешней транзакцией на тест."""
+    async with postgres_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        factory = async_sessionmaker(
+            bind=connection,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+
+        yield factory
+
+        await transaction.rollback()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def db_session(pg_session_factory):
+    """Сессия для прямой работы с Postgres в тесте."""
+    async with pg_session_factory() as session:
+        yield session
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def mongo_db(mongo_client):
+    """Чистая Mongo-база на тест: быстрый delete_many вместо drop_database."""
+    db = mongo_client[_mongo_db_name()]
+
+    collection_names = await db.list_collection_names()
+    for name in collection_names:
+        await db[name].delete_many({})
+
+    yield db
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def redis_clean(redis_pool):
+    """Очистка тестовых Redis-БД перед тестом."""
+    for client in redis_pool.values():
+        try:
+            await client.flushdb()
+        except Exception:
+            pass
+    yield redis_pool
+
+
+# =============================================================================
+# КЛИЕНТЫ ПРИЛОЖЕНИЯ
+# =============================================================================
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def test_client(pg_session_factory, mongo_db, redis_clean):
+    """HTTP-клиент приложения с точечными overrides."""
+
     async def override_get_db():
-        async with SessionLocal() as session:
+        async with pg_session_factory() as session:
             yield session
 
     async def override_get_mongo_db():
-        yield test_mongo_db
+        yield mongo_db
 
-    # Внедряем базовые оверрайды в приложение
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_mongo_db] = override_get_mongo_db
 
-    # --- ЗАПУСК КЛИЕНТА ---
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client
 
-    # --- ОЧИСТКА ПОСЛЕ ТЕСТА ---
     app.dependency_overrides.clear()
-    await test_engine.dispose()
-    mongo_client.close()
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture(loop_scope="session")
+async def async_client(test_client):
+    yield test_client
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def concurrent_test_client(postgres_engine, mongo_db, redis_clean):
+    """Клиент для тестов КОНКУРЕНТНОСТИ."""
+    factory = async_sessionmaker(postgres_engine, expire_on_commit=False)
+
+    async def override_get_db():
+        async with factory() as session:
+            yield session
+
+    async def override_get_mongo_db():
+        yield mongo_db
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_mongo_db] = override_get_mongo_db
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        yield client
+
+    app.dependency_overrides.clear()
+
+    async with postgres_engine.begin() as conn:
+        table_names = ", ".join(
+            f'"{table.name}"' for table in reversed(Base.metadata.sorted_tables)
+        )
+        if table_names:
+            await conn.execute(text(f"TRUNCATE TABLE {table_names} CASCADE"))
+
+
+@pytest_asyncio.fixture(loop_scope="session")
 async def minio_client(test_client):
-    """
-    Расширение базового клиента для тестов, которым нужен MinIO (S3).
-    Сюда подмешивается очистка бакетов и оверрайд зависимости S3-клиента.
-    """
+    """Расширение базового клиента для тестов, которым нужен MinIO (S3)."""
     test_s3_endpoint = f"http://127.0.0.1:{cfg.MINIO_TEST_PORT}"
     s3_session = aioboto3.Session()
 
-    # --- НАСТРОЙКА MINIO (Очистка и создание бакета) ---
     async with s3_session.client(
         service_name="s3",
         endpoint_url=test_s3_endpoint,
@@ -116,7 +281,6 @@ async def minio_client(test_client):
         aws_secret_access_key=cfg.MINIO_ROOT_PASSWORD,
     ) as s3_client:
         try:
-            # S3 не позволяет удалить непустой бакет, поэтому сначала чистим файлы
             response = await s3_client.list_objects_v2(Bucket=cfg.MINIO_DEFAULT_BUCKET)
             if "Contents" in response:
                 objects_to_delete = [
@@ -128,13 +292,10 @@ async def minio_client(test_client):
                 )
             await s3_client.delete_bucket(Bucket=cfg.MINIO_DEFAULT_BUCKET)
         except Exception:
-            # Если бакета не было — просто игнорируем
             pass
 
-        # Создаем чистый бакет для текущего теста
         await s3_client.create_bucket(Bucket=cfg.MINIO_DEFAULT_BUCKET)
 
-    # --- ДОПОЛНИТЕЛЬНЫЙ ОВЕРРАЙД ---
     async def override_get_s3_client():
         async with s3_session.client(
             service_name="s3",
@@ -144,33 +305,16 @@ async def minio_client(test_client):
         ) as client:
             yield client
 
-    # Добавляем оверрайд S3 поверх уже существующих в приложении
     app.dependency_overrides[get_s3_client] = override_get_s3_client
-
-    # Возвращаем тот же httpx клиент, но приложение теперь умеет работать с S3
     yield test_client
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_session():
-    """
-    Фикстура для прямой работы с Postgres в тестах.
-    Создает engine внутри текущего loop, изолирует транзакцию,
-    а после теста автоматически чистит коннекты.
-    """
-    # Создаем движок строго внутри контекста выполняющегося теста
-    engine = create_async_engine(postgres_url, echo=False)
-    TestingSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
-
-    # Отдаем сессию в тест
-    async with TestingSessionLocal() as session:
-        yield session
-
-    # Код ниже выполнится АВТОМАТИЧЕСКИ после завершения теста
-    await engine.dispose()
+# =============================================================================
+# ФАБРИКИ ДАННЫХ (Postgres-сущности)
+# =============================================================================
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture(loop_scope="session")
 async def auth_client(test_client, db_session, user_factory):
     raw_data = user_factory()
     password = "SecurePass123!"
@@ -208,26 +352,18 @@ def user_factory():
     return _create_user_data
 
 
-@pytest_asyncio.fixture(scope="function")
-async def create_test_environment():
-    """
-    Фабрика для создания тестового пользователя и инстанса в БД Postgres.
-    Автоматически учитывает обязательные поля 'title' и 'hash_password'.
-    """
-
+@pytest_asyncio.fixture(loop_scope="session")
+async def create_test_environment(pg_session_factory):
     async def _setup(
         role: UserRole = UserRole.CREATOR,
         user_active: bool = True,
         instance_active: bool = True,
         custom_instance_id: str = None,
     ):
-        get_db_override = app.dependency_overrides[get_db]
-
-        async for session in get_db_override():
+        async with pg_session_factory() as session:
             user_uuid = str(uuid4())
             instance_uuid = custom_instance_id or str(uuid4())
 
-            # Если инстанс с таким UUID уже не был создан ранее в рамках этого же теста
             if not custom_instance_id:
                 test_instance = Instances(
                     uuid=instance_uuid,
@@ -239,7 +375,7 @@ async def create_test_environment():
             test_user = Users(
                 uuid=user_uuid,
                 email=f"user_{user_uuid[:8]}@test.com",
-                hash_password="mocked_password_hash",  # Фикс NotNullViolationError
+                hash_password="mocked_password_hash",
                 role=role,
                 active=user_active,
                 instance_id=instance_uuid,
@@ -247,7 +383,6 @@ async def create_test_environment():
             session.add(test_user)
             await session.commit()
 
-            # Генерируем заголовки авторизации
             token = encode_jwt({"sub": user_uuid})
             headers = {"Authorization": f"Bearer {token}"}
 
@@ -256,9 +391,42 @@ async def create_test_environment():
     return _setup
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture(loop_scope="session")
+async def create_committed_environment(postgres_engine):
+    factory = async_sessionmaker(postgres_engine, expire_on_commit=False)
+
+    async def _setup(role: UserRole = UserRole.CREATOR):
+        async with factory() as session:
+            user_uuid = str(uuid4())
+            instance_uuid = str(uuid4())
+
+            session.add(
+                Instances(
+                    uuid=instance_uuid,
+                    title=f"Concurrent Компания {instance_uuid[:8]}",
+                    active=True,
+                )
+            )
+            session.add(
+                Users(
+                    uuid=user_uuid,
+                    email=f"user_{user_uuid[:8]}@test.com",
+                    hash_password="mocked_password_hash",
+                    role=role,
+                    active=True,
+                    instance_id=instance_uuid,
+                )
+            )
+            await session.commit()
+
+        token = encode_jwt({"sub": user_uuid})
+        return user_uuid, instance_uuid, {"Authorization": f"Bearer {token}"}
+
+    return _setup
+
+
+@pytest_asyncio.fixture(loop_scope="session")
 async def test_instance(db_session):
-    """Фикстура для создания активного инстанса магазина."""
     instance = Instances(title="Client Storefront Automation", active=True)
     db_session.add(instance)
     await db_session.commit()
@@ -266,23 +434,8 @@ async def test_instance(db_session):
     return instance
 
 
-def get_test_session_maker():
-    """Помощник для создания фабрики сессий внутри текущего event loop теста"""
-    postgres_url = (
-        f"postgresql+asyncpg://{cfg.POSTGRES_DB_USER}:{cfg.POSTGRES_DB_PASSWORD}@"
-        f"{cfg.POSTGRES_TEST_DB_HOST}:{cfg.POSTGRES_TEST_DB_PORT}/{cfg.POSTGRES_TEST_DB_NAME}"
-    )
-    # Создаем engine строго внутри выполняющегося таска, чтобы избежать конфликта петель asyncio
-    engine = create_async_engine(postgres_url, echo=False)
-    return async_sessionmaker(engine, expire_on_commit=False), engine
-
-
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def setup_catalog_template(test_client, create_test_environment):
-    """
-    Разворачивает изолированное окружение инстанса и создает базовый
-    шаблон "Товары" со строковым полем 'title' и числовым 'price'.
-    """
     user_uuid, instance_uuid, headers = await create_test_environment()
 
     schema = {
@@ -308,10 +461,6 @@ async def setup_catalog_template(test_client, create_test_environment):
 
 @pytest_asyncio.fixture
 def crm_template_factory(test_client, create_test_environment):
-    """
-    Фабрика для генерации изолированного окружения и создания шаблонов с динамической схемой.
-    """
-
     async def _create_template(name="Динамический шаблон", schema=None):
         user_uuid, instance_uuid, headers = await create_test_environment()
 
@@ -341,11 +490,6 @@ def crm_template_factory(test_client, create_test_environment):
 
 @pytest_asyncio.fixture
 def employee_factory(db_session):
-    """
-    Фабрика для создания пользователя в БД Postgres с привязкой к инстансу
-    и выдачей прав на конкретный инструмент (AppTool).
-    """
-
     async def _create_employee(instance_uuid, tool_name: str):
         employee_uuid = uuid4()
 
@@ -375,16 +519,10 @@ def employee_factory(db_session):
 
 @pytest_asyncio.fixture
 def crm_environment_factory(db_session):
-    """
-    Фабрика для генерации изолированного бизнес-пространства с Владельцем (CREATOR).
-    Возвращает UUID инстанса, заголовки владельца и хелпер для добавления сотрудников.
-    """
-
     async def _setup_env():
         instance_uuid = uuid4()
         creator_uuid = uuid4()
 
-        # 1. Создаем инстанс
         db_session.add(
             Instances(
                 uuid=instance_uuid,
@@ -393,7 +531,6 @@ def crm_environment_factory(db_session):
             )
         )
 
-        # 2. Создаем Создателя (Владельца) инстанса
         db_session.add(
             Users(
                 uuid=creator_uuid,
@@ -410,7 +547,6 @@ def crm_environment_factory(db_session):
         creator_token = encode_jwt(payload={"sub": str(creator_uuid)})
         creator_headers = {"Authorization": f"Bearer {creator_token}"}
 
-        # Хелпер для быстрого добавления сотрудников в рамках этого же инстанса
         async def add_employee(role: UserRole, allowed_tools: list):
             emp_uuid = uuid4()
             db_session.add(

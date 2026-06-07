@@ -1,6 +1,6 @@
 # mongo/exceptions/template.py
 
-from typing import Optional
+from typing import Any, Dict, Optional
 from exceptions.base import BaseAppException
 
 
@@ -54,3 +54,24 @@ class TemplateValidationError(TemplateDomainException):
 
     error_code = "TEMPLATE_VALIDATION_FAILED"
     message = "Некорректная структура описания схемы данных шаблона."
+
+    def __init__(
+        self,
+        message: Optional[str] = None,
+        column_name: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Универсальный конструктор, который позволяет передать как просто сообщение,
+        так и конкретное имя колонки, чтобы тесты могли его легко распарсить.
+        """
+        err_details = details or {}
+
+        if column_name:
+            err_details["column_name"] = column_name
+            # Если передали имя колонки, автоматически улучшаем сообщение для логов/тестов
+            fallback_message = f"{self.message} Ошибка в колонке: '{column_name}'."
+        else:
+            fallback_message = self.message
+
+        super().__init__(message=message or fallback_message, details=err_details)

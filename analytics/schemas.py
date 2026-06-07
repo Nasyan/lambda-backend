@@ -1,7 +1,7 @@
 # analytics/schemas.py
 
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from uuid import UUID
 from fastapi import HTTPException, status
 
@@ -71,8 +71,7 @@ class WidgetResponse(BaseModel):
     ast_filter: Optional[Dict[str, Any]]
     chart_config: ChartConfigPayload
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class WidgetUpdateRequest(BaseModel):

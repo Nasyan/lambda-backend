@@ -188,7 +188,6 @@ async def test_full_workflow_with_creator_and_user_roles(
 
 class TestSelectFieldIntegration:
 
-    @pytest.mark.annotations
     @pytest.mark.asyncio
     async def test_select_field_lifecycle(self, test_client, crm_template_factory):
         """

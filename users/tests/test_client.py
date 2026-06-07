@@ -254,11 +254,11 @@ class TestClientTokenRefreshFlow:
         test_client.headers.clear()
         await asyncio.sleep(1.05)  # Гарантируем изменение exp временной метки
 
-        # Обновляем сессию через клиентскую ручку
-        refresh_res = await test_client.post(
-            "/storefront-auth/refresh/",
-            cookies={"client_refresh_token": client_refresh},
-        )
+        # Явно задаем куки на инстансе клиента (современный подход HTTPX)
+        test_client.cookies = {"client_refresh_token": client_refresh}
+
+        # Обновляем сессию через клиентскую ручку без передачи аргумента cookies
+        refresh_res = await test_client.post("/storefront-auth/refresh/")
 
         assert refresh_res.status_code == 200
         assert refresh_res.json()["access_token"] != first_access_token
@@ -285,10 +285,10 @@ class TestClientTokenRefreshFlow:
         client_user.active = False
         await db_session.commit()
 
-        response = await test_client.post(
-            "/storefront-auth/refresh/",
-            cookies={"client_refresh_token": client_refresh},
-        )
+        # Явно задаем куки на инстансе клиента перед запросом
+        test_client.cookies = {"client_refresh_token": client_refresh}
+
+        response = await test_client.post("/storefront-auth/refresh/")
 
         assert response.status_code == 401
 

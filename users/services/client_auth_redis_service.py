@@ -28,7 +28,7 @@ class ClientAuthRedisService:
     async def save_verification_code(self, email: str, code: str) -> None:
         """Сохраняем только код (без инвайта, так как это саморегистрация)."""
         join_key = generate_key(prefix=JOIN_PREFIX, sub=email)
-        await self.redis.setex(join_key, 900, code)
+        await self.redis.set(name=join_key, ex=900, value=code)
 
     async def verify_and_delete_code(self, email: str, input_code: str) -> None:
         """Проверяем код публичного пользователя."""

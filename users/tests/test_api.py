@@ -39,9 +39,11 @@ class TestUsersAuth:
         user_data = user_factory()
         email = user_data["email"]
 
-        # Имитируем админский инвайт
+        # Имитируем админский инвайт (Перешли на современный .set с ex=)
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        await redis_email_db.setex(invite_redis_key, 3600, str(test_instance.uuid))
+        await redis_email_db.set(
+            name=invite_redis_key, value=str(test_instance.uuid), ex=3600
+        )
 
         # 3. Шаг первый: отправка формы регистрации
         response = await test_client.post("/auth/register/", json=user_data)
@@ -126,7 +128,10 @@ class TestUsersAuth:
         email = user_data["email"]
 
         redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        await redis_email_db.setex(redis_key, 3600, "corrupted_non_uuid_string")
+        # Перешли на современный .set с ex=
+        await redis_email_db.set(
+            name=redis_key, value="corrupted_non_uuid_string", ex=3600
+        )
 
         response = await test_client.post("/auth/register/", json=user_data)
 
@@ -152,7 +157,10 @@ class TestUsersAuth:
         email = user_data["email"]
 
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        await redis_email_db.setex(invite_redis_key, 3600, str(test_instance.uuid))
+        # Перешли на современный .set с ex=
+        await redis_email_db.set(
+            name=invite_redis_key, value=str(test_instance.uuid), ex=3600
+        )
 
         # Регистрируем аккаунт
         await test_client.post("/auth/register/", json=user_data)
@@ -201,7 +209,10 @@ class TestUsersAuth:
         email = user_data["email"]
 
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        await redis_email_db.setex(invite_redis_key, 3600, str(test_instance.uuid))
+        # Перешли на современный .set с ex=
+        await redis_email_db.set(
+            name=invite_redis_key, value=str(test_instance.uuid), ex=3600
+        )
 
         # Шаг 1: Первая регистрация (первая отправка письма)
         await test_client.post("/auth/register/", json=user_data)
@@ -247,7 +258,10 @@ class TestUsersAuth:
         email = user_data["email"]
 
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        await redis_email_db.setex(invite_redis_key, 3600, str(test_instance.uuid))
+        # Перешли на современный .set с ex=
+        await redis_email_db.set(
+            name=invite_redis_key, value=str(test_instance.uuid), ex=3600
+        )
 
         # Регистрируем первый раз
         await test_client.post("/auth/register/", json=user_data)
@@ -306,7 +320,7 @@ class TestTokenRefreshFlow:
         assert "HttpOnly" in set_cookie_header
 
     async def test_refresh_tokens_success_flow(self, test_client, db_session):
-        """Успешный цикл обновления токенов с явной передачей куки."""
+        """Успешный цикл обновления токенов без использования устаревшего аргумента cookies."""
         import asyncio
 
         email = "cycle_tester@example.com"
@@ -321,16 +335,17 @@ class TestTokenRefreshFlow:
         refresh_token = test_client.cookies.get("refresh_token")
         assert refresh_token is not None
 
-        # Очищаем заголовки авторизации
+        # Очищаем заголовки авторизации (например, Bearer токен, если он зашился в headers)
         test_client.headers.clear()
 
         # 🔥 Ждем чуть больше 1 секунды, чтобы exp у нового токена гарантированно изменился
         await asyncio.sleep(1.05)
 
-        # 2. Делаем запрос на обновление
-        refresh_res = await test_client.post(
-            "/auth/refresh/", cookies={"refresh_token": refresh_token}
-        )
+        # 2. Обновляем куки клиента явно (современный подход HTTPX)
+        test_client.cookies = {"refresh_token": refresh_token}
+
+        # 3. Делаем запрос на обновление — теперь он чистый и без варнингов
+        refresh_res = await test_client.post("/auth/refresh/")
 
         assert refresh_res.status_code == 200
 
@@ -347,7 +362,8 @@ class TestTokenRefreshFlow:
         """Попытка обновить токен без куки."""
         test_client.cookies.clear()
 
-        response = await test_client.post("/auth/refresh/", cookies={})
+        # Куки очищены, аргумент cookies={} удален, чтобы не триггерить варнинг
+        response = await test_client.post("/auth/refresh/")
 
         assert response.status_code == 401
 
@@ -365,9 +381,9 @@ class TestTokenRefreshFlow:
         }
         fake_cookie_token = encode_jwt(payload=bad_payload)
 
-        response = await test_client.post(
-            "/auth/refresh/", cookies={"refresh_token": fake_cookie_token}
-        )
+        # Проставляем плохой токен напрямую в инстанс клиента
+        test_client.cookies = {"refresh_token": fake_cookie_token}
+        response = await test_client.post("/auth/refresh/")
 
         assert response.status_code == 401
 
@@ -386,8 +402,8 @@ class TestTokenRefreshFlow:
         user.active = False
         await db_session.commit()
 
-        response = await test_client.post(
-            "/auth/refresh/", cookies={"refresh_token": refresh_token}
-        )
+        # Проставляем токен в инстанс клиента перед отправкой
+        test_client.cookies = {"refresh_token": refresh_token}
+        response = await test_client.post("/auth/refresh/")
 
         assert response.status_code == 401

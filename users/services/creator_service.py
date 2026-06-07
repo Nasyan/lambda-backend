@@ -61,8 +61,8 @@ class CreatorService:
 
         redis_key = generate_key(prefix=USER_INVITE_PREFIX, sub=email)
         try:
-            await self.redis.setex(
-                name=redis_key, time=86400, value=str(creator.instance_id)
+            await self.redis.set(
+                name=redis_key, ex=86400, value=str(creator.instance_id)
             )
         except Exception as e:
             raise InfrastructureStorageError(

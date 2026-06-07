@@ -1,6 +1,6 @@
 # policy/schemas.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 
@@ -39,5 +39,4 @@ class PolicyResponse(PolicyBase):
     id: UUID
     instance_uuid: UUID
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(populate_by_name=True)

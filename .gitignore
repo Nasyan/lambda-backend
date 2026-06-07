@@ -17,3 +17,5 @@ jwt-utils/certs/
 
 file_format.py
 manage.py
+
+requirements.txt

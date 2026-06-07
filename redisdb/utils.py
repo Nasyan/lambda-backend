@@ -1,7 +1,5 @@
-# redisdb/utils.py
-
 import redis.asyncio as redis
-from config import EMAIL_DB, LOGIN_DB, REDIS_HOST, REDIS_PORT, REGISTRATION_DB, TASK_DB
+import config  # Импортируем модуль целиком, а не переменные из него
 
 
 def generate_key(prefix, sub):
@@ -13,16 +11,16 @@ redis_clients = {}
 
 async def init_redis():
     dbs = {
-        "EMAIL_DB": EMAIL_DB,
-        "TASK_DB": TASK_DB,
-        "REGISTRATION_DB": REGISTRATION_DB,
-        "LOGIN_DB": LOGIN_DB,
+        "EMAIL_DB": config.EMAIL_DB,
+        "TASK_DB": config.TASK_DB,
+        "REGISTRATION_DB": config.REGISTRATION_DB,
+        "LOGIN_DB": config.LOGIN_DB,
     }
 
     for name, db in dbs.items():
         redis_clients[name] = redis.Redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
+            host=config.REDIS_HOST,
+            port=config.REDIS_PORT,  # Теперь подмена порта в контесте сработает!
             db=db,
             encoding="utf-8",
             decode_responses=True,
@@ -37,10 +35,6 @@ async def close_redis():
 
 def get_redis_db(db_name: str):
     async def get_client():
-        try:
-            client = redis_clients.get(db_name)
-        except Exception as e:
-            raise e
-        return client
+        return redis_clients.get(db_name)
 
     return get_client

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 from users.models import AppTools
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from pydantic_core import PydanticCustomError
 import re
 
@@ -19,8 +19,7 @@ class SettingsRead(SettingsBase):
     uuid: UUID
     user_uuid: UUID
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UsersCreate(BaseModel):
@@ -45,8 +44,7 @@ class UserRead(BaseModel):
     telegram: Optional[str] = None
     active: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ResendCodeRequest(BaseModel):
@@ -59,8 +57,7 @@ class UsersList(BaseModel):
     telegram: Optional[str]
     active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TokenResponse(BaseModel):
@@ -112,8 +109,7 @@ class InstanceResponse(BaseModel):
     title: str
     active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CreatorInviteRequest(BaseModel):
@@ -153,8 +149,7 @@ class CreatorResponse(BaseModel):
     role: str
     active: bool
 
-    class Config:
-        from_attributes = True  # Для Pydantic v2 (или orm_mode = True для Pydantic v1)
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ClientRegisterRequest(BaseModel):
@@ -194,13 +189,7 @@ class ClientRegisterRequest(BaseModel):
             )
         return value
 
-    class ConfigDict:
-        """Настройки Pydantic для защиты от лишних данных."""
-
-        # extra="forbid" гарантирует, что если хакер попытается подсунуть лишнее поле
-        # вроде {"role": "ADMIN"}, FastAPI сразу вернет 422 Unprocessable Entity
-        extra = "forbid"
-        str_strip_whitespace = True  # Автоматически убирает пробелы по краям строк
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 class ClientProfileResponse(BaseModel):
@@ -209,5 +198,4 @@ class ClientProfileResponse(BaseModel):
     name: str
     instance_id: UUID
 
-    class ConfigDict:
-        from_attributes = True  # Позволяет Pydantic автоматически читать данные из ORM-модели SQLAlchemy
+    model_config = ConfigDict(from_attributes=True)

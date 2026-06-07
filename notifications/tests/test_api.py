@@ -167,26 +167,21 @@ class TestNotification:
         # Настраиваем граф AST точно по твоей рабочей схеме:
         valid_trigger_payload = {
             "name": "Триггер на VIP статус",
+            "trigger_type": "AUTOMATION",
+            "source_template_uuid": client_template_uuid,
             "target_template_uuid": client_template_uuid,
             "event_type": "ON_RECORD_UPDATE",
-            "ast": {
+            "condition_ast": {
                 "type": "binary_op",
-                "operator": "gt",  # Поменяли 'greater_than' -> 'gt'
-                "left": {
-                    "type": "field",  # Поменяли 'template_field' -> 'field'
-                    "value": "orders_count",  # Поменяли 'field_name' -> 'value'
-                },
-                "right": {
-                    "type": "literal",  # Поменяли 'constant' -> 'literal'
-                    "value": 3,
-                },
+                "operator": "gt",
+                "left": {"type": "field", "value": "orders_count"},
+                "right": {"type": "literal", "value": 3},
             },
-            "actions": [
-                {
-                    "action_type": "send_notification",
-                    "notification_template_uuid": notification_template_uuid,
-                }
-            ],
+            "payload_ast": {"type": "field", "value": "full_name"},
+            "action_name": "SEND_NOTIFICATION",
+            "action_params": {
+                "notification_template_uuid": notification_template_uuid,
+            },
         }
 
         valid_trigger_resp = await test_client.post(
@@ -202,23 +197,24 @@ class TestNotification:
         # ==========================================================
         invalid_trigger_payload = {
             "name": "Сломанный триггер",
+            "trigger_type": "AUTOMATION",
+            "source_template_uuid": client_template_uuid,
             "target_template_uuid": client_template_uuid,
             "event_type": "ON_RECORD_UPDATE",
-            "ast": {
+            "condition_ast": {
                 "type": "binary_op",
-                "operator": "gt",  # Поменяли на 'gt'
+                "operator": "gt",
                 "left": {
-                    "type": "field",  # Поменяли на 'field'
+                    "type": "field",
                     "value": "broken_field_does_not_exist",  # Ломаем существующее поле!
                 },
-                "right": {"type": "literal", "value": 10},  # Поменяли на 'literal'
+                "right": {"type": "literal", "value": 10},
             },
-            "actions": [
-                {
-                    "action_type": "send_notification",
-                    "notification_template_uuid": notification_template_uuid,
-                }
-            ],
+            "payload_ast": {"type": "field", "value": "full_name"},
+            "action_name": "SEND_NOTIFICATION",
+            "action_params": {
+                "notification_template_uuid": notification_template_uuid,
+            },
         }
 
         invalid_trigger_resp = await test_client.post(
@@ -230,7 +226,12 @@ class TestNotification:
         assert invalid_trigger_resp.status_code in [400, 422]
         assert any(
             word in invalid_trigger_resp.text.lower()
-            for word in ["not found", "integrity", "schema_validation_error"]
+            for word in [
+                "not found",
+                "integrity",
+                "schema_validation_error",
+                "does not exist",
+            ]
         )
 
 

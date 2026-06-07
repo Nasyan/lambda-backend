@@ -50,6 +50,8 @@ MONGO_PORT = (
 )
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 MONGO_TEST_PORT = os.getenv("MONGO_TEST_PORT")
+MONDO_DB_PASSWORD = os.getenv("MONDO_DB_PASSWORD")
+MONGO_TEST_NAME = os.getenv("MONGO_TEST_NAME")
 
 # --- MinIO (S3) ---
 MINIO_HOST = get_host("MINIO_HOST")

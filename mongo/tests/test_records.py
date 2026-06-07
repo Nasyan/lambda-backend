@@ -1,14 +1,24 @@
 # mongo/tests/test_records.py
 
+"""Тесты слоя записей после сепарации (task3, ГЗ-1 Блок B).
+
+Матрица сценариев прежняя, но адресаты — правильные слои:
+- валидация данных по схеме -> core.validators.record.RecordDataValidator
+- бизнес-уникальность       -> core.validators.record.RecordUniqueConstraintChecker
+- глупый I/O                -> mongo.record.RecordRepository (новые сигнатуры)
+"""
+
 from uuid import uuid4
 
 import pytest
 from mongo.template import TemplateRepository
 from mongo.record import RecordRepository
 from mongo.history import HistoryRepository
-from mongo.exceptions.record import RecordValidationError
+from mongo.exceptions.record import RecordValidationError, DuplicateRecordKeyError
 from mongo.tools.exceptions import SchemaValidationError
 from mongo.tools.types import RelationListField
+
+from core.validators.record import RecordDataValidator, RecordUniqueConstraintChecker
 
 TEST_INSTANCE_ID = "company_a"
 TEST_USER_ID = "user_manager"
@@ -21,58 +31,146 @@ BASE_TEMPLATE_SCHEMA = {
 }
 
 
+async def create_test_template(mongo_db, name: str = "Users") -> dict:
+    """Хелпер для быстрого создания реального шаблона в тестах."""
+    template_repo = TemplateRepository(mongo_db)
+    return await template_repo.create_template(
+        instance_uuid=TEST_INSTANCE_ID,
+        name=name,
+        schema=BASE_TEMPLATE_SCHEMA,
+        user_uuid=TEST_USER_ID,
+    )
+
+
+async def create_validated_record(
+    record_repo: RecordRepository,
+    template: dict,
+    data: dict,
+) -> dict:
+    """Мини-оркестратор как в RecordService: валидация -> уникальность -> insert."""
+    validator = RecordDataValidator(record_repo)
+    checker = RecordUniqueConstraintChecker(record_repo)
+
+    await validator.validate(
+        data=data, schema=template["schema"], instance_uuid=TEST_INSTANCE_ID
+    )
+    await checker.check(
+        instance_uuid=TEST_INSTANCE_ID,
+        template_uuid=template["_id"],
+        data=data,
+        schema=template["schema"],
+    )
+    return await record_repo.create_record(
+        instance_uuid=TEST_INSTANCE_ID,
+        template_uuid=template["_id"],
+        data=data,
+        user_uuid=TEST_USER_ID,
+    )
+
+
 @pytest.mark.asyncio
-async def test_create_record_missing_required_field(mongo_db):
+async def test_validator_rejects_missing_required_field(mongo_db):
     record_repo = RecordRepository(mongo_db)
     template = await create_test_template(mongo_db)
 
     # Пропустили обязательное поле 'is_active'
     invalid_data = {"name": "Arseniy", "age": 25}
 
-    # 1. Отлавливаем базовый Exception, изолируя тест от изменений в импортах
-    with pytest.raises(Exception) as exc_info:
-        await record_repo.create_record(
-            instance_uuid=TEST_INSTANCE_ID,
-            template_uuid=template["_id"],
+    validator = RecordDataValidator(record_repo)
+    with pytest.raises(RecordValidationError) as exc_info:
+        await validator.validate(
             data=invalid_data,
             schema=template["schema"],
-            user_uuid=TEST_USER_ID,
+            instance_uuid=TEST_INSTANCE_ID,
         )
 
-    # 2. Наглядно проверяем, что это наша доменная ошибка валидации
     error = exc_info.value
-
     assert "is_active" in str(error)
-    # Если у ошибки есть словарь details, проверяем и его, безопасно через getattr
     error_details = getattr(error, "details", {})
     assert error_details.get("reason") == "schema_validation_error"
 
 
 @pytest.mark.asyncio
-async def test_create_record_invalid_type(mongo_db):
+async def test_validator_rejects_invalid_type(mongo_db):
     record_repo = RecordRepository(mongo_db)
     template = await create_test_template(mongo_db)
 
     # 'age' в шаблоне имеет тип 'number', а мы передаем строку
     invalid_data = {"name": "Arseniy", "age": "twenty-five", "is_active": True}
 
-    with pytest.raises(Exception) as exc_info:
-        await record_repo.create_record(
-            instance_uuid=TEST_INSTANCE_ID,
-            template_uuid=template["_id"],
+    validator = RecordDataValidator(record_repo)
+    with pytest.raises(RecordValidationError) as exc_info:
+        await validator.validate(
             data=invalid_data,
             schema=template["schema"],
-            user_uuid=TEST_USER_ID,
+            instance_uuid=TEST_INSTANCE_ID,
         )
 
     error = exc_info.value
-
-    # Проверяем, что в тексте ошибки фигурируют виновное поле 'age' и ожидаемый тип
     assert "age" in str(error)
     assert "number" in str(error).lower()
 
     error_details = getattr(error, "details", {})
     assert error_details.get("reason") == "schema_validation_error"
+
+
+@pytest.mark.asyncio
+async def test_repo_is_dumb_io_inserts_without_validation(mongo_db):
+    """Контракт глупого репозитория: невалидные по схеме данные он НЕ проверяет."""
+    record_repo = RecordRepository(mongo_db)
+    template = await create_test_template(mongo_db)
+
+    # С точки зрения схемы данные битые, но репозиторий обязан их вставить:
+    # за валидацию отвечает сервисный слой.
+    record = await record_repo.create_record(
+        instance_uuid=TEST_INSTANCE_ID,
+        template_uuid=template["_id"],
+        data={"name": 123},
+        user_uuid=TEST_USER_ID,
+    )
+    assert record["_id"] is not None
+    assert record["data"]["name"] == 123
+
+
+@pytest.mark.asyncio
+async def test_unique_checker_blocks_duplicates(mongo_db):
+    record_repo = RecordRepository(mongo_db)
+    template_repo = TemplateRepository(mongo_db)
+
+    schema = {
+        "email": {"type": "string", "required": True, "unique": True},
+    }
+    template = await template_repo.create_template(
+        instance_uuid=TEST_INSTANCE_ID,
+        name="Clients",
+        schema=schema,
+        user_uuid=TEST_USER_ID,
+    )
+
+    first = await record_repo.create_record(
+        instance_uuid=TEST_INSTANCE_ID,
+        template_uuid=template["_id"],
+        data={"email": "a@b.c"},
+        user_uuid=TEST_USER_ID,
+    )
+
+    checker = RecordUniqueConstraintChecker(record_repo)
+    with pytest.raises(DuplicateRecordKeyError):
+        await checker.check(
+            instance_uuid=TEST_INSTANCE_ID,
+            template_uuid=template["_id"],
+            data={"email": "a@b.c"},
+            schema=schema,
+        )
+
+    # Запись может обновлять саму себя без конфликта (exclude_record_uuid)
+    await checker.check(
+        instance_uuid=TEST_INSTANCE_ID,
+        template_uuid=template["_id"],
+        data={"email": "a@b.c"},
+        schema=schema,
+        exclude_record_uuid=first["_id"],
+    )
 
 
 @pytest.mark.asyncio
@@ -83,13 +181,7 @@ async def test_get_record_multi_tenancy_security(mongo_db):
     valid_data = {"name": "John", "is_active": False}
 
     # Создаем запись в рамках компании А (TEST_INSTANCE_ID)
-    created_record = await record_repo.create_record(
-        instance_uuid=TEST_INSTANCE_ID,
-        template_uuid=template["_id"],
-        data=valid_data,
-        schema=template["schema"],
-        user_uuid=TEST_USER_ID,
-    )
+    created_record = await create_validated_record(record_repo, template, valid_data)
 
     # Пытаемся прочитать эту же запись, но запрашиваем из-под инстанса "company_b"
     with pytest.raises(Exception) as exc_info:
@@ -108,17 +200,6 @@ async def test_get_record_multi_tenancy_security(mongo_db):
     assert error_details.get("record_uuid") == created_record["_id"]
 
 
-async def create_test_template(mongo_db, name: str = "Users") -> dict:
-    """Хелпер для быстрого создания реального шаблона в тестах."""
-    template_repo = TemplateRepository(mongo_db)
-    return await template_repo.create_template(
-        instance_uuid=TEST_INSTANCE_ID,
-        name=name,
-        schema=BASE_TEMPLATE_SCHEMA,
-        user_uuid=TEST_USER_ID,
-    )
-
-
 async def create_relation_list_test_setup(
     mongo_db, count: int = 7
 ) -> tuple[RecordRepository, list[dict], dict]:
@@ -129,16 +210,14 @@ async def create_relation_list_test_setup(
     product_records = []
     for idx in range(count):
         product_records.append(
-            await record_repo.create_record(
-                instance_uuid=TEST_INSTANCE_ID,
-                template_uuid=product_template["_id"],
-                data={
+            await create_validated_record(
+                record_repo,
+                product_template,
+                {
                     "name": f"Product {idx}",
                     "age": idx,
                     "is_active": True,
                 },
-                schema=product_template["schema"],
-                user_uuid=TEST_USER_ID,
             )
         )
 
@@ -167,17 +246,10 @@ async def test_create_record_success(mongo_db):
     # 1. Создаем честный шаблон через TemplateRepository
     template = await create_test_template(mongo_db)
     template_uuid = template["_id"]
-    schema = template["schema"]
 
-    # 2. Передаем реальные данные схемы в репозиторий записей
+    # 2. Полный путь сервиса: валидация -> уникальность -> вставка
     valid_data = {"name": "Arseniy", "age": 25, "is_active": True}
-    record = await record_repo.create_record(
-        instance_uuid=TEST_INSTANCE_ID,
-        template_uuid=template_uuid,
-        data=valid_data,
-        schema=schema,
-        user_uuid=TEST_USER_ID,
-    )
+    record = await create_validated_record(record_repo, template, valid_data)
 
     assert record["_id"] is not None
     assert record["template_uuid"] == template_uuid
@@ -211,7 +283,7 @@ async def test_relation_list_field_raises_schema_error_for_missing_reference(mon
 
 
 @pytest.mark.asyncio
-async def test_create_record_relation_list_rejects_missing_reference(mongo_db):
+async def test_validator_relation_list_rejects_missing_reference(mongo_db):
     record_repo, product_records, order_template = (
         await create_relation_list_test_setup(mongo_db)
     )
@@ -222,13 +294,12 @@ async def test_create_record_relation_list_rejects_missing_reference(mongo_db):
     ]
     relation_items.insert(3, {"target_uuid": missing_uuid, "qty": 99})
 
+    validator = RecordDataValidator(record_repo)
     with pytest.raises(RecordValidationError) as exc_info:
-        await record_repo.create_record(
-            instance_uuid=TEST_INSTANCE_ID,
-            template_uuid=order_template["_id"],
+        await validator.validate(
             data={"order_number": "ORD-404", "items": relation_items},
             schema=order_template["schema"],
-            user_uuid=TEST_USER_ID,
+            instance_uuid=TEST_INSTANCE_ID,
         )
 
     assert missing_uuid in str(exc_info.value)
@@ -246,12 +317,10 @@ async def test_create_record_relation_list_accepts_valid_references(mongo_db):
         for idx, product in enumerate(product_records)
     ]
 
-    record = await record_repo.create_record(
-        instance_uuid=TEST_INSTANCE_ID,
-        template_uuid=order_template["_id"],
-        data={"order_number": "ORD-200", "items": relation_items},
-        schema=order_template["schema"],
-        user_uuid=TEST_USER_ID,
+    record = await create_validated_record(
+        record_repo,
+        order_template,
+        {"order_number": "ORD-200", "items": relation_items},
     )
 
     assert record["_id"] is not None
@@ -266,22 +335,13 @@ async def test_get_records_with_filter_success(mongo_db):
     record_repo = RecordRepository(mongo_db)
     template = await create_test_template(mongo_db)
     t_id = template["_id"]
-    schema = template["schema"]
 
     # Создаем двух пользователей с разным статусом активности
-    await record_repo.create_record(
-        TEST_INSTANCE_ID,
-        t_id,
-        {"name": "Alex", "is_active": True},
-        schema,
-        TEST_USER_ID,
+    await create_validated_record(
+        record_repo, template, {"name": "Alex", "is_active": True}
     )
-    await record_repo.create_record(
-        TEST_INSTANCE_ID,
-        t_id,
-        {"name": "Ivan", "is_active": False},
-        schema,
-        TEST_USER_ID,
+    await create_validated_record(
+        record_repo, template, {"name": "Ivan", "is_active": False}
     )
 
     # Запрашиваем только активных (Исправлено: распаковываем кортеж результатов и total)
@@ -302,22 +362,13 @@ async def test_get_records_sorting_asc_desc(mongo_db):
     record_repo = RecordRepository(mongo_db)
     template = await create_test_template(mongo_db)
     t_id = template["_id"]
-    schema = template["schema"]
 
     # Создаем записи с разным возрастом
-    await record_repo.create_record(
-        TEST_INSTANCE_ID,
-        t_id,
-        {"name": "John", "age": 20, "is_active": True},
-        schema,
-        TEST_USER_ID,
+    await create_validated_record(
+        record_repo, template, {"name": "John", "age": 20, "is_active": True}
     )
-    await record_repo.create_record(
-        TEST_INSTANCE_ID,
-        t_id,
-        {"name": "Jane", "age": 30, "is_active": True},
-        schema,
-        TEST_USER_ID,
+    await create_validated_record(
+        record_repo, template, {"name": "Jane", "age": 30, "is_active": True}
     )
 
     # Сортируем по возрасту по возрастанию (ASC) (Исправлено: распаковываем кортеж)
@@ -351,18 +402,9 @@ async def test_record_history_logging_and_retrieval(mongo_db):
     history_repo = HistoryRepository(mongo_db)
     template = await create_test_template(mongo_db)
 
-    t_id = template["_id"]
-    schema = template["schema"]
-
     # 1. Создаем изначальную запись (Версия 1)
     initial_data = {"name": "Arseniy", "age": 25, "is_active": True}
-    record = await record_repo.create_record(
-        instance_uuid=TEST_INSTANCE_ID,
-        template_uuid=t_id,
-        data=initial_data,
-        schema=schema,
-        user_uuid=TEST_USER_ID,
-    )
+    record = await create_validated_record(record_repo, template, initial_data)
 
     record_uuid = record["_id"]
     # Имитируем структуру документа, где по умолчанию версия равна 1
@@ -386,10 +428,8 @@ async def test_record_history_logging_and_retrieval(mongo_db):
     }  # Стал на год старше
     await record_repo.update_record_data(
         instance_uuid=TEST_INSTANCE_ID,
-        template_uuid=t_id,  # 🔥 Добавили недостающий аргумент!
         record_uuid=record_uuid,
         new_data=updated_data,
-        schema=schema,
     )
     # 4. Проверяем, что в истории успешно сохранился снимок именно ПЕРВОЙ версии
     history_lines = await history_repo.get_record_history(

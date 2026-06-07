@@ -45,7 +45,8 @@ class AdminService:
             raise UserAlreadyExistsError(email=email)
 
         redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        await self.redis.setex(name=redis_key, time=86400, value=str(instance_id))
+
+        await self.redis.set(name=redis_key, ex=86400, value=str(instance_id))
         return instance.title
 
     async def create_instance(self, title: str) -> Instances:

@@ -3,7 +3,7 @@
 import re
 from typing import Dict, Any, Set, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from uuid import UUID
 
 from triggers.models import Trigger
@@ -104,7 +104,10 @@ class SchemaIntegrityValidator:
         result_triggers = await db.execute(
             select(Trigger).where(
                 Trigger.instance_uuid == instance_uuid,
-                Trigger.target_template_uuid == template_uuid,
+                or_(
+                    Trigger.source_template_uuid == template_uuid,
+                    Trigger.target_template_uuid == template_uuid,
+                ),
             )
         )
         triggers = result_triggers.scalars().all()
@@ -188,12 +191,19 @@ class SchemaIntegrityValidator:
         result_triggers = await db.execute(
             select(Trigger).where(
                 Trigger.instance_uuid == instance_uuid,
-                Trigger.target_template_uuid == template_uuid,
+                Trigger.source_template_uuid == template_uuid,
             )
         )
         for trigger in result_triggers.scalars().all():
-            if _is_used(cls.extract_used_fields(trigger.ast)):
-                conflicts.append(f"Условие в триггере '{trigger.name}'")
+            trigger_asts = [
+                trigger.condition_ast,
+                trigger.payload_ast,
+                trigger.action_mapping_ast,
+            ]
+            for trigger_ast in trigger_asts:
+                if _is_used(cls.extract_used_fields(trigger_ast or {})):
+                    conflicts.append(f"AST в триггере '{trigger.name}'")
+                    break
 
         result_widgets = await db.execute(
             select(AnalyticsWidget).where(
@@ -361,6 +371,13 @@ class SchemaIntegrityValidator:
             used_fields.update(
                 cls.extract_used_fields(ast_node.get("filter_expression", {}))
             )
+        elif node_type == "object":
+            for child in ast_node.get("fields", {}).values():
+                used_fields.update(cls.extract_used_fields(child))
+        elif node_type == "query":
+            for item in ast_node.get("filters", []):
+                if isinstance(item.get("value"), dict):
+                    used_fields.update(cls.extract_used_fields(item.get("value")))
 
         return used_fields
 

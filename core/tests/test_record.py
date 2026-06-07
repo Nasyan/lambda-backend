@@ -1,7 +1,7 @@
 # core/tests/test_record.py
 
 import pytest
-from engine.integrity import SchemaIntegrityValidator
+from engine.schema_rules import NoCodeSchemaValidator
 from engine.exceptions.integrity import SchemaValidationError
 from policy.models import StorefrontPolicies
 
@@ -35,13 +35,15 @@ class TestSchemaIntegrityProtection:
             "event_type": "ON_RECORD_CREATE",
             "action_name": "test_action",
             "action_params": {"required_text": "Новый макет добавлен в трекер"},
-            "ast": {
+            "source_template_uuid": template_uuid,
+            "target_template_uuid": template_uuid,
+            "condition_ast": {
                 "type": "binary_op",
                 "operator": "eq",
                 "left": {"type": "field", "value": "status"},
                 "right": {"type": "literal", "value": "needs_review"},
             },
-            "target_template_uuid": template_uuid,
+            "payload_ast": {"type": "field", "value": "status"},
         }
         trigger_resp = await test_client.post(
             f"/instances/{instance_uuid}/triggers/",
@@ -132,13 +134,15 @@ class TestSchemaIntegrityProtection:
             "event_type": "ON_RECORD_UPDATE",
             "action_name": "test_action",
             "action_params": {"required_text": "Внимание"},
-            "ast": {
+            "source_template_uuid": template_uuid,
+            "target_template_uuid": template_uuid,
+            "condition_ast": {
                 "type": "binary_op",
                 "operator": "gt",
                 "left": {"type": "field", "value": "payment_amount"},
                 "right": {"type": "literal", "value": 50000},
             },
-            "target_template_uuid": template_uuid,
+            "payload_ast": {"type": "field", "value": "payment_amount"},
         }
         trigger_create_resp = await test_client.post(
             f"/instances/{instance_uuid}/triggers/",
@@ -279,9 +283,7 @@ class TestSchemaIntegrityCascade:
         }
 
         # Вызов не должен вызывать исключений
-        SchemaIntegrityValidator.validate_storefront_policy(
-            schema, valid_policy_payload
-        )
+        NoCodeSchemaValidator.validate_storefront_policy(schema, valid_policy_payload)
 
         invalid_policy_payload = {
             "read_mask": ["device_name", "wrong_root.ram"],
@@ -291,7 +293,7 @@ class TestSchemaIntegrityCascade:
 
         # 1. Меняем класс исключения на SchemaValidationError
         with pytest.raises(SchemaValidationError) as exc_info:
-            SchemaIntegrityValidator.validate_storefront_policy(
+            NoCodeSchemaValidator.validate_storefront_policy(
                 schema, invalid_policy_payload
             )
 

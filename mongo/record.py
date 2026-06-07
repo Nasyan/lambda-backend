@@ -4,7 +4,7 @@ from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
-from mongo.tools.validators import validate_record_data, validate_field_name
+from mongo.tools.validators import validate_field_name
 from mongo.tools.builders import (
     build_record_document,
     build_record_query,
@@ -12,54 +12,26 @@ from mongo.tools.builders import (
     build_records_search_query,
     build_records_sort_spec,
 )
-from mongo.exceptions.record import (
-    RecordNotFoundError,
-    RecordValidationError,
-    DuplicateRecordKeyError,
-)
+from mongo.exceptions.record import RecordNotFoundError
 
 from mongo.tools.utils import stringify_id, stringify_ids_list, validate_dict_keys
 
 
 class RecordRepository:
+    """Глупый I/O-слой записей (task3, ГЗ-1 Блок B).
+
+    Только insert/update/find/delete. Бизнес-валидация данных по схеме —
+    core/validators/record.py (RecordDataValidator), уникальность —
+    RecordUniqueConstraintChecker, миграции данных под новую схему —
+    core/services/schema_migration.py. Оркестрация — RecordService.
+
+    validate_dict_keys / validate_field_name здесь НЕ бизнес-валидация,
+    а защита I/O-слоя от NoSQL-инъекций ($-операторы и точки в ключах) —
+    последний рубеж перед базой.
+    """
+
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["records"]
-
-    async def check_unique_constraints(
-        self,
-        instance_uuid: str,
-        template_uuid: str,
-        data: Dict[str, Any],
-        schema: Dict[str, Any],
-        exclude_record_uuid: Optional[str] = None,
-    ) -> None:
-        """
-        Проверяет, нет ли в базе записей, у которых совпадают поля,
-        помеченные как unique: True в схеме шаблона.
-        """
-        for field_name, field_meta in schema.items():
-            if field_meta.get("unique") is True and field_name in data:
-                field_value = data[field_name]
-
-                query = {
-                    "instance_uuid": instance_uuid,
-                    "template_uuid": template_uuid,
-                    f"data.{field_name}": field_value,
-                }
-
-                if exclude_record_uuid:
-                    query["_id"] = {"$ne": exclude_record_uuid}
-
-                duplicate = await self.collection.find_one(query, projection={"_id": 1})
-
-                if duplicate:
-                    # Выбрасываем специализированную ошибку дубликата бизнес-ключа с деталями
-                    raise DuplicateRecordKeyError(
-                        message=f"Ошибка уникальности: Поле '{field_name}' уже содержит значение '{field_value}'.",
-                        field_name=field_name,
-                        invalid_value=field_value,
-                        reason="unique_constraint_violation",
-                    )
 
     async def aggregate_records(
         self,
@@ -122,37 +94,40 @@ class RecordRepository:
                 record["_id"] = str(record["_id"])
             yield record
 
+    async def has_field_value_duplicate(
+        self,
+        instance_uuid: str,
+        template_uuid: str,
+        field_name: str,
+        value: Any,
+        exclude_record_uuid: Optional[str] = None,
+    ) -> bool:
+        """Глупая I/O-проверка: существует ли запись с таким значением поля.
+
+        Решение о нарушении бизнес-уникальности принимает
+        RecordUniqueConstraintChecker, репозиторий лишь читает базу.
+        """
+        query = {
+            "instance_uuid": instance_uuid,
+            "template_uuid": template_uuid,
+            f"data.{field_name}": value,
+        }
+
+        if exclude_record_uuid:
+            query["_id"] = {"$ne": exclude_record_uuid}
+
+        duplicate = await self.collection.find_one(query, projection={"_id": 1})
+        return duplicate is not None
+
     async def create_record(
         self,
         instance_uuid: str,
         template_uuid: str,
         data: Dict[str, Any],
-        schema: Dict[str, Any],
         user_uuid: str,
-        s3_service: Optional[Any] = None,
     ) -> Dict[str, Any]:
-
+        """Глупая вставка документа. Данные обязаны быть провалидированы сервисом."""
         validate_dict_keys(data)
-
-        try:
-            await validate_record_data(
-                data,
-                schema,
-                instance_uuid=instance_uuid,
-                record_repo=self,
-                s3_service=s3_service,
-            )
-        except Exception as e:
-            raise RecordValidationError(
-                message=str(e), reason="schema_validation_error"
-            )
-
-        await self.check_unique_constraints(
-            instance_uuid=instance_uuid,
-            template_uuid=template_uuid,
-            data=data,
-            schema=schema,
-        )
 
         record_document = build_record_document(
             instance_uuid=instance_uuid,
@@ -167,36 +142,12 @@ class RecordRepository:
     async def update_record_data(
         self,
         instance_uuid: str,
-        template_uuid: str,
         record_uuid: str,
         new_data: Dict[str, Any],
-        schema: Dict[str, Any],
         user_uuid: Optional[str] = None,
-        s3_service: Optional[Any] = None,
     ) -> Dict[str, Any]:
-
+        """Глупое обновление полей data. Данные обязаны быть провалидированы сервисом."""
         validate_dict_keys(new_data)
-
-        try:
-            await validate_record_data(
-                new_data,
-                schema,
-                instance_uuid=instance_uuid,
-                record_repo=self,
-                s3_service=s3_service,
-            )
-        except Exception as e:
-            raise RecordValidationError(
-                message=str(e), reason="schema_validation_error"
-            )
-
-        await self.check_unique_constraints(
-            instance_uuid=instance_uuid,
-            template_uuid=template_uuid,
-            data=new_data,
-            schema=schema,
-            exclude_record_uuid=record_uuid,
-        )
 
         query = build_record_query(instance_uuid, record_uuid)
         update_query = build_record_update_query(new_data)
@@ -218,6 +169,18 @@ class RecordRepository:
             )
 
         return stringify_id(updated_record)
+
+    async def set_record_data_field(
+        self,
+        record_id: Any,
+        column_name: str,
+        value: Any,
+    ) -> None:
+        """Точечный $set одного поля data по первичному ключу (для миграций схемы)."""
+        await self.collection.update_one(
+            {"_id": record_id},
+            {"$set": {f"data.{column_name}": value}},
+        )
 
     async def get_record_by_uuid(
         self,
@@ -287,59 +250,6 @@ class RecordRepository:
                 instance_uuid=instance_uuid,
                 message=f"Запись '{record_uuid}' не найдена для удаления.",
             )
-
-    async def validate_existing_records_against_field(
-        self,
-        instance_uuid: str,
-        template_uuid: str,
-        column_name: str,
-        new_field_meta: Dict[str, Any],
-        s3_service: Optional[Any] = None,
-    ) -> None:
-
-        query = {
-            "instance_uuid": str(instance_uuid),
-            "template_uuid": str(template_uuid),
-        }
-        target_schema = {column_name: new_field_meta}
-        is_required = new_field_meta.get("required", False)
-
-        cursor = self.collection.find(query)
-
-        async for record in cursor:
-            record_id = record.get("_id")
-            record_data = record.get("data", {})
-
-            if is_required and column_name not in record_data:
-                raise RecordValidationError(
-                    message=f"Существующая запись с ID '{record_id}' не содержит обязательного поля '{column_name}'.",
-                    field_name=column_name,
-                    reason="retroactive_required_constraint_failed",
-                )
-
-            if column_name in record_data:
-                isolated_data = {column_name: record_data[column_name]}
-
-                try:
-                    await validate_record_data(
-                        isolated_data,
-                        target_schema,
-                        instance_uuid=instance_uuid,
-                        record_repo=self,
-                        s3_service=s3_service,
-                    )
-                except Exception as e:
-                    raise RecordValidationError(
-                        message=f"Ошибка обратной совместимости в записи '{record_id}': {str(e)}",
-                        field_name=column_name,
-                        reason="retroactive_type_migration_failed",
-                    )
-
-                if isolated_data[column_name] != record_data[column_name]:
-                    await self.collection.update_one(
-                        {"_id": record_id},
-                        {"$set": {f"data.{column_name}": isolated_data[column_name]}},
-                    )
 
     async def get_records_by_uuids(
         self,

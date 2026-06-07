@@ -55,7 +55,7 @@ async def test_create_storefront_policy_invalid_fields(
     test_client, create_test_environment
 ):
     """
-    Негативный сценарий: SchemaIntegrityValidator должен заблокировать создание политики,
+    Негативный сценарий: Валидатор схемы (NoCodeSchemaValidator) должен заблокировать создание политики,
     если администратор передал несуществующие в схеме поля.
     """
     _, instance_uuid, headers = await create_test_environment()

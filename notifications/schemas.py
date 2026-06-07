@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Any, Dict, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TemplateCreate(BaseModel):
@@ -41,8 +41,7 @@ class TemplateResponse(BaseModel):
     recipients_config: Dict[str, Any]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class InboxItemResponse(BaseModel):
@@ -52,5 +51,4 @@ class InboxItemResponse(BaseModel):
     title: str
     body: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(populate_by_name=True)
