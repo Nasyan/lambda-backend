@@ -1,8 +1,9 @@
 # minio/views.py
 
-from fastapi import APIRouter, Depends, status, HTTPException
+from fastapi import APIRouter, Depends, status
 from minio.service import S3StorageService
 from minio.dependencies import get_s3_service
+from minio.exceptions.service import StorageFileNotFoundError
 from minio.schemas import (
     UploadIntentRequest,
     UploadIntentResponse,
@@ -54,10 +55,7 @@ async def get_download_link(
     """
     # Сначала проверяем, а существует ли файл вообще, чтобы не генерировать ссылку на 404
     if not await s3_service.file_exists(file_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Файл не найден в хранилище S3",
-        )
+        raise StorageFileNotFoundError(file_path=file_path)
 
     url = await s3_service.generate_download_url(file_path=file_path, expires_in=3600)
     return DownloadResponse(download_url=url)
@@ -78,10 +76,7 @@ async def delete_file(
     или полностью удаляет строку (record) из CRM.
     """
     if not await s3_service.file_exists(payload.file_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Файл не найден в хранилище S3",
-        )
+        raise StorageFileNotFoundError(file_path=payload.file_path)
 
     await s3_service.delete_file(file_path=payload.file_path)
     # Возвращаем 204 No Content, так как тело ответа при успешном удалении не требуется

@@ -13,6 +13,7 @@ class IntegrityDomainException(BaseAppException):
 class CircularDependencyError(IntegrityDomainException):
     """Выбрасывается при обнаружении циклических зависимостей в графе формул."""
 
+    status_code = 400
     error_code = "CIRCULAR_DEPENDENCY_ERROR"
     message = "Обнаружена циклическая зависимость в расчетных формулах."
 
@@ -23,6 +24,7 @@ class CircularDependencyError(IntegrityDomainException):
 class SchemaValidationError(IntegrityDomainException):
     """Выбрасывается при невалидных конфигурациях (несуществующие поля в масках/фильтрах)."""
 
+    status_code = 400
     error_code = "SCHEMA_VALIDATION_ERROR"
 
     def __init__(self, reason: str, invalid_fields: List[str], target_context: str):
@@ -39,6 +41,7 @@ class SchemaDependencyError(IntegrityDomainException):
     """Выбрасывается, когда деструктивное изменение (удаление таблицы или поля)
     блокируется из-за существующих внешних зависимостей платформы."""
 
+    status_code = 409
     error_code = "SCHEMA_DEPENDENCY_CONFLICT"
 
     def __init__(

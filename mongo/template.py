@@ -8,7 +8,18 @@ from mongo.tools.builders import build_template_document
 
 # Импортируем наши новые профессиональные доменные ошибки
 from mongo.exceptions.template import TemplateNotFoundError
-from mongo.tools.utils import normalize_template, build_update_meta
+from mongo.tools.utils import (
+    normalize_template,
+    build_update_meta,
+    with_active_filter,
+    with_deleted_filter,
+)
+from logs.mongo import (
+    execute_logged_mongo_call,
+    log_mongo_query,
+    start_mongo_timer,
+    summarize_mongo_document,
+)
 from middleware.schemas import ListParameters
 
 
@@ -23,13 +34,23 @@ class TemplateRepository:
 
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["templates"]
+        self.records_collection = db["records"]
+        self.history_collection = db["records_history"]
 
     async def get_template(
         self, instance_uuid: str, template_uuid: str
     ) -> Dict[str, Any]:
         """Получает шаблон по его UUID без нормализации (сырой документ)."""
-        query = {"instance_uuid": str(instance_uuid), "_id": str(template_uuid)}
-        template = await self.collection.find_one(query)
+        query = with_active_filter(
+            {"instance_uuid": str(instance_uuid), "_id": str(template_uuid)}
+        )
+        template = await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
         if not template:
             raise TemplateNotFoundError(
                 template_uuid=template_uuid,
@@ -49,7 +70,13 @@ class TemplateRepository:
             user_uuid=user_uuid,
         )
 
-        result = await self.collection.insert_one(template_document)
+        result = await execute_logged_mongo_call(
+            self.collection,
+            "insert_one",
+            summarize_mongo_document(template_document),
+            lambda: self.collection.insert_one(template_document),
+            lambda _: 1,
+        )
         template_document["_id"] = str(result.inserted_id)
 
         return normalize_template(template_document)
@@ -58,8 +85,16 @@ class TemplateRepository:
         self, instance_uuid: str, template_uuid: str
     ) -> Dict[str, Any]:
 
-        query = {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
-        template = await self.collection.find_one(query)
+        query = with_active_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
+        template = await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
         if not template:
             raise TemplateNotFoundError(
                 template_uuid=template_uuid,
@@ -75,8 +110,14 @@ class TemplateRepository:
         """Ищет шаблон по его имени внутри конкретного инстанса."""
         # Используем регистронезависимый поиск или точное совпадение.
         # Обычно для имен таблиц лучше делать точное совпадение.
-        query = {"instance_uuid": str(instance_uuid), "name": name}
-        return await self.collection.find_one(query)
+        query = with_active_filter({"instance_uuid": str(instance_uuid), "name": name})
+        return await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
 
     async def get_all_templates(
         self,
@@ -87,7 +128,7 @@ class TemplateRepository:
     ) -> List[Dict[str, Any]]:
 
         # 1. Формируем базовый фильтр по инстансу
-        query = {"instance_uuid": str(instance_uuid)}
+        query = with_active_filter({"instance_uuid": str(instance_uuid)})
 
         # Значения сортировки по умолчанию
         sort_field = "created_at"
@@ -112,7 +153,21 @@ class TemplateRepository:
             .limit(limit)
         )
 
+        start_time = start_mongo_timer()
         docs = await cursor.to_list(length=limit)
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(docs),
+            extra={
+                "limit": limit,
+                "offset": offset,
+                "sort_field": sort_field,
+                "sort_direction": sort_direction,
+            },
+        )
         return [normalize_template(d) for d in docs]
 
     async def update_template_metadata(
@@ -123,15 +178,25 @@ class TemplateRepository:
         user_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
 
-        query = {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        query = with_active_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
 
         set_data = build_update_meta(user_uuid)
         set_data["name"] = name.strip()
 
-        updated = await self.collection.find_one_and_update(
+        update = {"$set": set_data}
+        updated = await execute_logged_mongo_call(
+            self.collection,
+            "find_one_and_update",
             query,
-            {"$set": set_data},
-            return_document=ReturnDocument.AFTER,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
+            update=update,
         )
 
         if not updated:
@@ -150,15 +215,25 @@ class TemplateRepository:
         user_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Глупый $set новой колонки. Метаданные обязаны быть провалидированы сервисом."""
-        query = {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        query = with_active_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
 
         set_data = build_update_meta(user_uuid)
         set_data[f"schema.{column_name}"] = field_meta
 
-        updated = await self.collection.find_one_and_update(
+        update = {"$set": set_data}
+        updated = await execute_logged_mongo_call(
+            self.collection,
+            "find_one_and_update",
             query,
-            {"$set": set_data},
-            return_document=ReturnDocument.AFTER,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
+            update=update,
         )
 
         if not updated:
@@ -176,16 +251,26 @@ class TemplateRepository:
         user_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
 
-        query = {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        query = with_active_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
         set_data = build_update_meta(user_uuid)
 
-        updated = await self.collection.find_one_and_update(
+        update = {
+            "$unset": {f"schema.{column_name}": ""},
+            "$set": set_data,
+        }
+        updated = await execute_logged_mongo_call(
+            self.collection,
+            "find_one_and_update",
             query,
-            {
-                "$unset": {f"schema.{column_name}": ""},
-                "$set": set_data,
-            },
-            return_document=ReturnDocument.AFTER,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
+            update=update,
         )
 
         if not updated:
@@ -197,12 +282,67 @@ class TemplateRepository:
 
     async def delete_template(self, instance_uuid: str, template_uuid: str) -> None:
 
-        query = {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
-        result = await self.collection.delete_one(query)
+        query = with_active_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
+        update = {"$set": {**build_update_meta(), "is_deleted": True}}
+        result = await execute_logged_mongo_call(
+            self.collection,
+            "update_one",
+            query,
+            lambda: self.collection.update_one(query, update),
+            lambda item: item.modified_count,
+            update=update,
+        )
 
-        if result.deleted_count == 0:
+        if result.matched_count == 0:
             raise TemplateNotFoundError(
                 template_uuid=template_uuid, instance_uuid=instance_uuid
+            )
+
+        records_query = {
+            "instance_uuid": str(instance_uuid),
+            "template_uuid": str(template_uuid),
+        }
+        start_time = start_mongo_timer()
+        record_id_docs = await self.records_collection.find(
+            records_query, projection={"_id": 1}
+        ).to_list(length=None)
+        log_mongo_query(
+            self.records_collection,
+            "find",
+            records_query,
+            start_time,
+            len(record_id_docs),
+            extra={"projection": ["_id"]},
+        )
+        record_ids = [str(doc["_id"]) for doc in record_id_docs]
+
+        records_update = {"$set": {**build_update_meta(), "is_deleted": True}}
+        await execute_logged_mongo_call(
+            self.records_collection,
+            "update_many",
+            records_query,
+            lambda: self.records_collection.update_many(records_query, records_update),
+            lambda item: item.modified_count,
+            update=records_update,
+        )
+
+        if record_ids:
+            history_query = {
+                "instance_uuid": str(instance_uuid),
+                "record_uuid": {"$in": record_ids},
+            }
+            history_update = {"$set": {"is_deleted": True}}
+            await execute_logged_mongo_call(
+                self.history_collection,
+                "update_many",
+                history_query,
+                lambda: self.history_collection.update_many(
+                    history_query, history_update
+                ),
+                lambda item: item.modified_count,
+                update=history_update,
             )
 
     async def update_column_meta(
@@ -219,15 +359,25 @@ class TemplateRepository:
         существующих записей под новые правила — ответственность
         TemplateService / SchemaMigrationService.
         """
-        query = {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        query = with_active_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
 
         set_data = build_update_meta(user_uuid)
         set_data[f"schema.{column_name}"] = new_meta
 
-        updated = await self.collection.find_one_and_update(
+        update = {"$set": set_data}
+        updated = await execute_logged_mongo_call(
+            self.collection,
+            "find_one_and_update",
             query,
-            {"$set": set_data},
-            return_document=ReturnDocument.AFTER,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
+            update=update,
         )
 
         if not updated:
@@ -236,3 +386,142 @@ class TemplateRepository:
             )
 
         return normalize_template(updated)
+
+    async def get_deleted_template_by_uuid(
+        self, instance_uuid: str, template_uuid: str
+    ) -> Dict[str, Any]:
+        query = with_deleted_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
+        template = await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
+        if not template:
+            raise TemplateNotFoundError(
+                template_uuid=template_uuid,
+                instance_uuid=instance_uuid,
+                message=f"Удаленный шаблон таблицы '{template_uuid}' не найден.",
+            )
+        return normalize_template(template)
+
+    async def get_deleted_templates(
+        self,
+        instance_uuid: str,
+        params: Optional[ListParameters] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        query = with_deleted_filter({"instance_uuid": str(instance_uuid)})
+        sort_field = "created_at"
+        sort_direction = -1
+
+        if params:
+            if params.search:
+                query["name"] = {"$regex": params.search, "$options": "i"}
+            sort_field, sort_direction = params.get_mongo_sort(
+                default_field="created_at"
+            )
+
+        cursor = (
+            self.collection.find(query)
+            .sort(sort_field, sort_direction)
+            .skip(offset)
+            .limit(limit)
+        )
+        start_time = start_mongo_timer()
+        docs = await cursor.to_list(length=limit)
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(docs),
+            extra={
+                "limit": limit,
+                "offset": offset,
+                "sort_field": sort_field,
+                "sort_direction": sort_direction,
+            },
+        )
+        return [normalize_template(d) for d in docs]
+
+    async def restore_template(
+        self, instance_uuid: str, template_uuid: str
+    ) -> Dict[str, Any]:
+        query = with_deleted_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
+        update = {"$set": {**build_update_meta(), "is_deleted": False}}
+        restored = await execute_logged_mongo_call(
+            self.collection,
+            "find_one_and_update",
+            query,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
+            update=update,
+        )
+        if not restored:
+            raise TemplateNotFoundError(
+                template_uuid=template_uuid,
+                instance_uuid=instance_uuid,
+                message=f"Удаленный шаблон таблицы '{template_uuid}' не найден.",
+            )
+
+        records_query = with_deleted_filter(
+            {
+                "instance_uuid": str(instance_uuid),
+                "template_uuid": str(template_uuid),
+            }
+        )
+        start_time = start_mongo_timer()
+        record_id_docs = await self.records_collection.find(
+            records_query, projection={"_id": 1}
+        ).to_list(length=None)
+        log_mongo_query(
+            self.records_collection,
+            "find",
+            records_query,
+            start_time,
+            len(record_id_docs),
+            extra={"projection": ["_id"]},
+        )
+        record_ids = [str(doc["_id"]) for doc in record_id_docs]
+
+        records_update = {"$set": {**build_update_meta(), "is_deleted": False}}
+        await execute_logged_mongo_call(
+            self.records_collection,
+            "update_many",
+            records_query,
+            lambda: self.records_collection.update_many(records_query, records_update),
+            lambda item: item.modified_count,
+            update=records_update,
+        )
+
+        if record_ids:
+            history_query = with_deleted_filter(
+                {
+                    "instance_uuid": str(instance_uuid),
+                    "record_uuid": {"$in": record_ids},
+                }
+            )
+            history_update = {"$set": {"is_deleted": False}}
+            await execute_logged_mongo_call(
+                self.history_collection,
+                "update_many",
+                history_query,
+                lambda: self.history_collection.update_many(
+                    history_query, history_update
+                ),
+                lambda item: item.modified_count,
+                update=history_update,
+            )
+
+        return normalize_template(restored)

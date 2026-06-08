@@ -21,6 +21,7 @@ class StorefrontDomainException(BaseAppException):
 class StorefrontTemplateNotFoundError(StorefrontDomainException):
     """Запрошенная по ЧПУ-имени таблица не существует в инстансе."""
 
+    status_code = 404
     error_code = "STOREFRONT_TEMPLATE_NOT_FOUND"
     message = "Таблица не найдена"
 
@@ -40,6 +41,7 @@ class StorefrontTemplateNotFoundError(StorefrontDomainException):
 class StorefrontEmptyWritePayloadError(StorefrontDomainException):
     """После применения write-маски и дефолтов не осталось данных для записи."""
 
+    status_code = 400
     error_code = "STOREFRONT_EMPTY_WRITE_PAYLOAD"
     message = "Нет разрешенных полей для записи или значений по умолчанию"
 

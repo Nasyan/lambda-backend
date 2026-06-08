@@ -22,6 +22,7 @@ class RecordResponse(BaseModel):
     created_by: str
     updated_by: Optional[str] = None
     version: int
+    is_deleted: bool = False
 
     class Config:
         populate_by_name = True

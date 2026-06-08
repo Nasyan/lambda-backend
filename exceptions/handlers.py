@@ -269,17 +269,23 @@ EXCEPTION_STATUS_MAPPING = {
 }
 
 
+def resolve_exception_status_code(exc: BaseAppException) -> int:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        return int(status_code)
+
+    for exc_class, mapped_status in EXCEPTION_STATUS_MAPPING.items():
+        if isinstance(exc, exc_class):
+            return mapped_status
+
+    return status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
 async def app_exception_handler(
     request: Request, exc: BaseAppException
 ) -> JSONResponse:
     """Перехватчик контролируемых бизнес-исключений платформы."""
-    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-
-    # Резолвим статус-код с учетом наследования классов
-    for exc_class, mapped_status in EXCEPTION_STATUS_MAPPING.items():
-        if isinstance(exc, exc_class):
-            status_code = mapped_status
-            break
+    status_code = resolve_exception_status_code(exc)
 
     return JSONResponse(
         status_code=status_code,

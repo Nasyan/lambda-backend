@@ -7,12 +7,14 @@ from exceptions.base import BaseAppException
 class FormulaEngineException(BaseAppException):
     """Базовое исключение для всех ошибок движка формул и AST-обхода."""
 
+    status_code = 422
     error_code = "FORMULA_ENGINE_ERROR"
 
 
 class FormulaValidationError(BaseAppException):
     """Базовое исключение для всех ошибок движка формул и AST-обхода."""
 
+    status_code = 422
     error_code = "FORMULA_INVALID_ERROR"
 
 

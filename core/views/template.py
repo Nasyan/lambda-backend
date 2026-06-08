@@ -41,6 +41,18 @@ async def get_templates(
     )
 
 
+@router.get("/deleted", response_model=List[TemplateResponse])
+async def get_deleted_templates(
+    instance_uuid: UUID,
+    params: ListParameters = Depends(),
+    instance: Instances = Depends(get_current_instance_creator),
+    template_service: TemplateService = Depends(get_template_service),
+):
+    return await template_service.get_deleted_templates(
+        instance_uuid=instance_uuid, params=params
+    )
+
+
 @router.post("", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 async def create_template(
     instance_uuid: UUID,
@@ -70,6 +82,20 @@ async def delete_template(
         instance_uuid=instance_uuid,
         template_uuid=template_uuid,
         db=db,
+    )
+
+
+@router.post("/{template_uuid}/restore", response_model=TemplateResponse)
+async def restore_template(
+    instance_uuid: UUID,
+    template_uuid: UUID,
+    instance: Instances = Depends(get_current_instance_creator),
+    current_user: Users = Depends(get_current_user),
+    template_service: TemplateService = Depends(get_template_service),
+):
+    return await template_service.restore_template(
+        instance_uuid=instance_uuid,
+        template_uuid=template_uuid,
     )
 
 

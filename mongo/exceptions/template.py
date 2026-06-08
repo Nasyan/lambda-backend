@@ -13,6 +13,7 @@ class TemplateDomainException(BaseAppException):
 class TemplateNotFoundError(TemplateDomainException):
     """Выбрасывается, когда шаблон (структура динамической таблицы) не найден."""
 
+    status_code = 404
     error_code = "TEMPLATE_NOT_FOUND"
     message = "Запрашиваемый шаблон таблицы не найден."
 
@@ -31,6 +32,7 @@ class TemplateNotFoundError(TemplateDomainException):
 class SchemaMutationError(TemplateDomainException):
     """Выбрасывается при невозможности изменить структуру таблицы (миграция метаданных заблокирована данными)."""
 
+    status_code = 422
     error_code = "SCHEMA_MUTATION_FAILED"
     message = "Не удалось изменить структуру таблицы из-за несовместимости с существующими данными."
 
@@ -52,5 +54,6 @@ class SchemaMutationError(TemplateDomainException):
 class TemplateValidationError(TemplateDomainException):
     """Выбрасывается, если само описание схемы (типы колонок, маски) составлено некорректно."""
 
+    status_code = 400
     error_code = "TEMPLATE_VALIDATION_FAILED"
     message = "Некорректная структура описания схемы данных шаблона."

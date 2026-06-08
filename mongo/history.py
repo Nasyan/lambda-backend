@@ -6,7 +6,18 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from mongo.tools.builders import build_history_document
 
 # Импортируем наши утилиты
-from mongo.tools.utils import stringify_id, stringify_ids_list, extract_field_history
+from mongo.tools.utils import (
+    stringify_id,
+    stringify_ids_list,
+    extract_field_history,
+    with_active_filter,
+)
+from logs.mongo import (
+    execute_logged_mongo_call,
+    log_mongo_query,
+    start_mongo_timer,
+    summarize_mongo_document,
+)
 
 
 class HistoryRepository:
@@ -33,7 +44,13 @@ class HistoryRepository:
             snapshot=snapshot,
         )
 
-        await self.collection.insert_one(history_doc)
+        await execute_logged_mongo_call(
+            self.collection,
+            "insert_one",
+            summarize_mongo_document(history_doc),
+            lambda: self.collection.insert_one(history_doc),
+            lambda _: 1,
+        )
         return stringify_id(history_doc)
 
     async def get_record_history(
@@ -43,25 +60,44 @@ class HistoryRepository:
         Возвращает полную историю изменений конкретной записи,
         отсортированную от самых свежих версий к самым старым (DESC).
         """
-        query = {"instance_uuid": str(instance_uuid), "record_uuid": str(record_uuid)}
+        query = with_active_filter(
+            {"instance_uuid": str(instance_uuid), "record_uuid": str(record_uuid)}
+        )
 
         cursor = (
             self.collection.find(query).sort("version", -1).skip(offset).limit(limit)
         )
 
+        start_time = start_mongo_timer()
         results = await cursor.to_list(length=limit)
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(results),
+            extra={"limit": limit, "offset": offset, "sort": [("version", -1)]},
+        )
         return stringify_ids_list(results)
 
     async def get_snapshot_by_version(
         self, instance_uuid: str, record_uuid: str, version: int
     ) -> Optional[Dict[str, Any]]:
         """Возвращает конкретный снимок записи для реализации фичи отката (Rollback)."""
-        query = {
-            "instance_uuid": str(instance_uuid),
-            "record_uuid": str(record_uuid),
-            "version": int(version),
-        }
-        record = await self.collection.find_one(query)
+        query = with_active_filter(
+            {
+                "instance_uuid": str(instance_uuid),
+                "record_uuid": str(record_uuid),
+                "version": int(version),
+            }
+        )
+        record = await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
         return stringify_id(record)
 
     async def get_field_history(

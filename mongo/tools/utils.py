@@ -4,6 +4,18 @@ from typing import Dict, Any, List, Optional
 from mongo.tools.validators import validate_field_name
 from datetime import datetime, timezone
 
+ACTIVE_DOCUMENT_FILTER = {"is_deleted": {"$ne": True}}
+DELETED_DOCUMENT_FILTER = {"is_deleted": True}
+
+
+def with_active_filter(query: Dict[str, Any]) -> Dict[str, Any]:
+    """Treat older documents without is_deleted as active."""
+    return {**query, **ACTIVE_DOCUMENT_FILTER}
+
+
+def with_deleted_filter(query: Dict[str, Any]) -> Dict[str, Any]:
+    return {**query, **DELETED_DOCUMENT_FILTER}
+
 
 def stringify_id(document: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """

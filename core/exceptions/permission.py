@@ -13,6 +13,7 @@ class SecurityDomainException(BaseAppException):
 class PermissionsNotConfiguredError(SecurityDomainException):
     """Выбрасывается, когда у пользователя вообще отсутствует объект разрешений."""
 
+    status_code = 403
     error_code = "USER_PERMISSIONS_NOT_CONFIGURED"
     message = "Доступ к инструментам платформы не настроен."
 
@@ -24,6 +25,7 @@ class PermissionsNotConfiguredError(SecurityDomainException):
 class ToolAccessDeniedError(SecurityDomainException):
     """Выбрасывается, когда у пользователя нет прав на конкретный инструмент."""
 
+    status_code = 403
     error_code = "TOOL_ACCESS_DENIED"
 
     def __init__(

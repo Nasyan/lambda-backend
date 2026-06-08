@@ -14,6 +14,7 @@ def build_template_document(
         "name": name.strip(),
         "schema": schema,
         "version": 1,  # <- ДОБАВЬ СЮДА
+        "is_deleted": False,
         "created_at": datetime.now(timezone.utc),
         "created_by": str(user_uuid),
     }
@@ -33,6 +34,7 @@ def build_record_document(
         "template_uuid": str(template_uuid),
         "data": data,
         "version": 1,  # Изначальная версия записи при создании
+        "is_deleted": False,
         "created_by": str(user_uuid),
         "created_at": now,
         "updated_at": now,
@@ -131,5 +133,6 @@ def build_history_document(
         "user_uuid": str(user_uuid),
         "version": int(version),
         "snapshot": snapshot,
+        "is_deleted": False,
         "created_at": now,  # FIX: consistent datetime type
     }

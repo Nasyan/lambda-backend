@@ -77,6 +77,7 @@ class MongoPipelineBuilder:
         base_match = {
             "instance_uuid": self.instance_uuid,
             "template_uuid": self.template_uuid,
+            "is_deleted": {"$ne": True},
         }
         pipeline.append({"$match": base_match})
 

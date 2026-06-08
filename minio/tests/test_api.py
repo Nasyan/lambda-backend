@@ -77,7 +77,7 @@ class TestStorageAPI:
             f"/storage/download/?file_path={file_path}"
         )
         assert gone_response.status_code == 404
-        assert gone_response.json()["detail"] == "Файл не найден в хранилище S3"
+        assert gone_response.json()["error_code"] == "STORAGE_FILE_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_get_download_link_not_found(self, minio_client: AsyncClient):
@@ -86,7 +86,7 @@ class TestStorageAPI:
 
         response = await minio_client.get(f"/storage/download/?file_path={fake_path}")
         assert response.status_code == 404
-        assert "Файл не найден" in response.json()["detail"]
+        assert response.json()["error_code"] == "STORAGE_FILE_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_delete_file_not_found(self, minio_client: AsyncClient):
@@ -97,7 +97,7 @@ class TestStorageAPI:
             method="DELETE", url="/storage/delete/", json={"file_path": fake_path}
         )
         assert response.status_code == 404
-        assert "Файл не найден" in response.json()["detail"]
+        assert response.json()["error_code"] == "STORAGE_FILE_NOT_FOUND"
 
 
 class TestStorageIntegration:

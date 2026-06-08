@@ -4,7 +4,8 @@ from typing import Any, DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from mongo.tools.utils import stringify_id
+from mongo.tools.utils import stringify_id, with_active_filter
+from logs.mongo import log_mongo_query, start_mongo_timer
 
 
 class BatchDataLoader:
@@ -65,9 +66,13 @@ class BatchDataLoader:
                 }
                 if template_uuid is not None:
                     query["template_uuid"] = template_uuid
+                query = with_active_filter(query)
 
+                start_time = start_mongo_timer()
                 cursor = self.collection.find(query)
+                documents_returned = 0
                 async for record in cursor:
+                    documents_returned += 1
                     stringify_id(record)
                     record_cache_key = (
                         cache_instance_uuid,
@@ -75,6 +80,13 @@ class BatchDataLoader:
                         str(record["_id"]),
                     )
                     self._records[record_cache_key] = record
+                log_mongo_query(
+                    self.collection,
+                    "find",
+                    query,
+                    start_time,
+                    documents_returned,
+                )
 
             self._pending_ids[cache_key].clear()
 
@@ -145,9 +157,13 @@ class BatchDataLoader:
             }
             if normalized_template_uuid is not None:
                 query["template_uuid"] = normalized_template_uuid
+            query = with_active_filter(query)
 
+            start_time = start_mongo_timer()
             cursor = self.collection.find(query)
+            documents_returned = 0
             async for record in cursor:
+                documents_returned += 1
                 stringify_id(record)
                 field_value = self._resolve_dotted(record, field_name)
                 if field_value is not None:
@@ -155,6 +171,13 @@ class BatchDataLoader:
                     self._records[
                         (self.instance_uuid, normalized_template_uuid, str(record["_id"]))
                     ] = record
+            log_mongo_query(
+                self.collection,
+                "find",
+                query,
+                start_time,
+                documents_returned,
+            )
 
         self._field_cache[cache_key] = result
         return result
@@ -181,25 +204,42 @@ class BatchDataLoader:
             "template_uuid": str(target_template_uuid),
             f"data.{filter_field}": filter_value,
         }
+        match_query = with_active_filter(match_query)
 
         if agg_function == "count":
-            return await self.collection.count_documents(match_query)
+            start_time = start_mongo_timer()
+            result = await self.collection.count_documents(match_query)
+            log_mongo_query(
+                self.collection,
+                "count_documents",
+                match_query,
+                start_time,
+                result,
+            )
+            return result
 
         if not agg_field:
             return 0
 
-        cursor = self.collection.aggregate(
-            [
-                {"$match": match_query},
-                {
-                    "$group": {
-                        "_id": None,
-                        "result": {f"${agg_function}": f"$data.{agg_field}"},
-                    }
-                },
-            ]
-        )
+        pipeline = [
+            {"$match": match_query},
+            {
+                "$group": {
+                    "_id": None,
+                    "result": {f"${agg_function}": f"$data.{agg_field}"},
+                }
+            },
+        ]
+        start_time = start_mongo_timer()
+        cursor = self.collection.aggregate(pipeline)
         docs = await cursor.to_list(length=1)
+        log_mongo_query(
+            self.collection,
+            "aggregate",
+            pipeline,
+            start_time,
+            len(docs),
+        )
         if docs and docs[0].get("result") is not None:
             return docs[0]["result"]
         return 0
@@ -215,6 +255,7 @@ class BatchDataLoader:
             "instance_uuid": self.instance_uuid,
             "template_uuid": str(target_template_uuid),
         }
+        query = with_active_filter(query)
         for item in filters:
             field_name = item["field"]
             operator = item.get("operator", "eq")
@@ -245,8 +286,17 @@ class BatchDataLoader:
             projection = {f"data.{field_name}": 1 for field_name in return_fields}
             projection.update({"_id": 1, "instance_uuid": 1, "template_uuid": 1})
 
+        start_time = start_mongo_timer()
         cursor = self.collection.find(query, projection=projection).limit(limit)
         records = await cursor.to_list(length=limit)
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(records),
+            extra={"limit": limit, "projection": projection},
+        )
         return [stringify_id(record) for record in records]
 
     def _normalize_template_uuid(self, template_uuid: Optional[str]) -> Optional[str]:

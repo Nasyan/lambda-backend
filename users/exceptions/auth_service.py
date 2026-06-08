@@ -14,6 +14,7 @@ class AuthDomainException(BaseAppException):
 class AuthRateLimitExceededError(AuthDomainException):
     """Выбрасывается при нарушении анти-спам лимита на отправку кодов."""
 
+    status_code = 429
     error_code = "AUTH_RATE_LIMIT_EXCEEDED"
     message = "Слишком много запросов. Пожалуйста, подождите."
 
@@ -28,6 +29,7 @@ class AuthRateLimitExceededError(AuthDomainException):
 class InvitationRequiredError(AuthDomainException):
     """Выбрасывается, если пользователь пытается зарегистрироваться без инвайта."""
 
+    status_code = 403
     error_code = "INVITATION_REQUIRED"
     message = "Регистрация недоступна. Вы должны получить приглашение от администратора или создателя контента."
 
@@ -38,6 +40,7 @@ class InvitationRequiredError(AuthDomainException):
 class InvitationExpiredError(AuthDomainException):
     """Выбрасывается, если инвайт протух или был отозван при повторной отправке кода."""
 
+    status_code = 403
     error_code = "INVITATION_EXPIRED"
     message = "Ссылка-приглашение истекла или была аннулирована."
 
@@ -49,6 +52,7 @@ class InvitationExpiredError(AuthDomainException):
 class VerificationCodeExpiredError(AuthDomainException):
     """Выбрасывается, если код подтверждения устарел (нет записи в Redis)."""
 
+    status_code = 400
     error_code = "VERIFICATION_CODE_EXPIRED"
     message = "Код подтверждения устарел или не запрашивался."
 
@@ -59,6 +63,7 @@ class VerificationCodeExpiredError(AuthDomainException):
 class InvalidVerificationCodeError(AuthDomainException):
     """Выбрасывается при вводе неверного кода подтверждения."""
 
+    status_code = 400
     error_code = "INVALID_VERIFICATION_CODE"
     message = "Введен неверный код подтверждения."
 
@@ -70,6 +75,7 @@ class InvalidVerificationCodeError(AuthDomainException):
 class UserAlreadyRegisteredError(AuthDomainException):
     """Выбрасывается, если пользователь уже зарегистрирован и подтвержден."""
 
+    status_code = 400
     error_code = "USER_ALREADY_REGISTERED"
     message = "Пользователь с таким email уже зарегистрирован и активен."
 
@@ -80,6 +86,7 @@ class UserAlreadyRegisteredError(AuthDomainException):
 class UserNotFoundError(AuthDomainException):
     """Выбрасывается, когда пользователь не найден в БД при верификации/повторной отправке."""
 
+    status_code = 404
     error_code = "USER_NOT_FOUND"
     message = "Пользователь с таким email-адресом не найден в системе."
 
@@ -90,6 +97,7 @@ class UserNotFoundError(AuthDomainException):
 class InvalidCredentialsError(AuthDomainException):
     """Выбрасывается при неверном email или пароле для входа."""
 
+    status_code = 400
     error_code = "INVALID_CREDENTIALS"
     message = "Неверный email или пароль."
 
@@ -100,6 +108,7 @@ class InvalidCredentialsError(AuthDomainException):
 class InvalidTokenCredentialsError(AuthDomainException):
     """Аналог HTTP_401 для JWT-сессий, когда токен протух или подделан."""
 
+    status_code = 401
     error_code = "INVALID_TOKEN_CREDENTIALS"
     message = "Не удалось подтвердить подлинность сессии."
 
@@ -114,6 +123,7 @@ class InvalidTokenCredentialsError(AuthDomainException):
 class StorageDataCorruptedError(AuthDomainException):
     """Выбрасывается, если структура данных в Redis повреждена (500 ошибка)."""
 
+    status_code = 500
     error_code = "STORAGE_DATA_CORRUPTED"
     message = "Внутренняя ошибка целостности данных сессии регистрации."
 

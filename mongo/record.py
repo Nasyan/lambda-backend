@@ -14,7 +14,19 @@ from mongo.tools.builders import (
 )
 from mongo.exceptions.record import RecordNotFoundError
 
-from mongo.tools.utils import stringify_id, stringify_ids_list, validate_dict_keys
+from mongo.tools.utils import (
+    stringify_id,
+    stringify_ids_list,
+    validate_dict_keys,
+    with_active_filter,
+    with_deleted_filter,
+)
+from logs.mongo import (
+    execute_logged_mongo_call,
+    log_mongo_query,
+    start_mongo_timer,
+    summarize_mongo_document,
+)
 
 
 class RecordRepository:
@@ -32,6 +44,7 @@ class RecordRepository:
 
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["records"]
+        self.history_collection = db["records_history"]
 
     async def aggregate_records(
         self,
@@ -48,9 +61,16 @@ class RecordRepository:
             "template_uuid": str(target_template_uuid),
             f"data.{filter_field}": filter_value,
         }
+        match_query = with_active_filter(match_query)
 
         if agg_function == "count":
-            return await self.collection.count_documents(match_query)
+            return await execute_logged_mongo_call(
+                self.collection,
+                "count_documents",
+                match_query,
+                lambda: self.collection.count_documents(match_query),
+                lambda result: result,
+            )
 
         if not agg_field:
             return 0
@@ -65,8 +85,16 @@ class RecordRepository:
             },
         ]
 
+        start_time = start_mongo_timer()
         cursor = self.collection.aggregate(pipeline)
         docs = await cursor.to_list(length=1)
+        log_mongo_query(
+            self.collection,
+            "aggregate",
+            pipeline,
+            start_time,
+            len(docs),
+        )
 
         if docs and docs[0].get("result") is not None:
             return docs[0]["result"]
@@ -84,15 +112,29 @@ class RecordRepository:
             "instance_uuid": str(instance_uuid),
             "template_uuid": str(template_uuid),
         }
+        query = with_active_filter(query)
 
         # Открываем курсор MongoDB
+        start_time = start_mongo_timer()
         cursor = self.collection.find(query)
+        documents_returned = 0
 
         # Лениво отдаем записи по одной по мере их поступления из сети
-        async for record in cursor:
-            if "_id" in record:
-                record["_id"] = str(record["_id"])
-            yield record
+        try:
+            async for record in cursor:
+                documents_returned += 1
+                if "_id" in record:
+                    record["_id"] = str(record["_id"])
+                yield record
+        finally:
+            log_mongo_query(
+                self.collection,
+                "find",
+                query,
+                start_time,
+                documents_returned,
+                extra={"stream": True},
+            )
 
     async def has_field_value_duplicate(
         self,
@@ -112,11 +154,19 @@ class RecordRepository:
             "template_uuid": template_uuid,
             f"data.{field_name}": value,
         }
+        query = with_active_filter(query)
 
         if exclude_record_uuid:
             query["_id"] = {"$ne": exclude_record_uuid}
 
-        duplicate = await self.collection.find_one(query, projection={"_id": 1})
+        duplicate = await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query, projection={"_id": 1}),
+            lambda result: 1 if result else 0,
+            extra={"projection": ["_id"]},
+        )
         return duplicate is not None
 
     async def create_record(
@@ -136,7 +186,13 @@ class RecordRepository:
             user_uuid=user_uuid,
         )
 
-        await self.collection.insert_one(record_document)
+        await execute_logged_mongo_call(
+            self.collection,
+            "insert_one",
+            summarize_mongo_document(record_document),
+            lambda: self.collection.insert_one(record_document),
+            lambda _: 1,
+        )
         return stringify_id(record_document)
 
     async def update_record_data(
@@ -149,16 +205,23 @@ class RecordRepository:
         """Глупое обновление полей data. Данные обязаны быть провалидированы сервисом."""
         validate_dict_keys(new_data)
 
-        query = build_record_query(instance_uuid, record_uuid)
+        query = with_active_filter(build_record_query(instance_uuid, record_uuid))
         update_query = build_record_update_query(new_data)
 
         if user_uuid:
             update_query["$set"]["updated_by"] = str(user_uuid)
 
-        updated_record = await self.collection.find_one_and_update(
+        updated_record = await execute_logged_mongo_call(
+            self.collection,
+            "find_one_and_update",
             query,
-            update_query,
-            return_document=ReturnDocument.AFTER,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update_query,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
+            update=update_query,
         )
 
         if not updated_record:
@@ -177,9 +240,15 @@ class RecordRepository:
         value: Any,
     ) -> None:
         """Точечный $set одного поля data по первичному ключу (для миграций схемы)."""
-        await self.collection.update_one(
-            {"_id": record_id},
-            {"$set": {f"data.{column_name}": value}},
+        query = with_active_filter({"_id": record_id})
+        update = {"$set": {f"data.{column_name}": value}}
+        await execute_logged_mongo_call(
+            self.collection,
+            "update_one",
+            query,
+            lambda: self.collection.update_one(query, update),
+            lambda result: result.modified_count,
+            update=update,
         )
 
     async def get_record_by_uuid(
@@ -188,8 +257,14 @@ class RecordRepository:
         record_uuid: str,
     ) -> Dict[str, Any]:
 
-        query = build_record_query(instance_uuid, record_uuid)
-        record = await self.collection.find_one(query)
+        query = with_active_filter(build_record_query(instance_uuid, record_uuid))
+        record = await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
 
         if not record:
             raise RecordNotFoundError(
@@ -215,10 +290,18 @@ class RecordRepository:
         validate_dict_keys(filters)
 
         # Строим query один раз — он пойдет и в count, и в find
-        query = build_records_search_query(instance_uuid, template_uuid, filters)
+        query = with_active_filter(
+            build_records_search_query(instance_uuid, template_uuid, filters)
+        )
 
         # 1. Параллельно или последовательно считаем общее количество документов в БД по этой выборке
-        total_count = await self.collection.count_documents(query)
+        total_count = await execute_logged_mongo_call(
+            self.collection,
+            "count_documents",
+            query,
+            lambda: self.collection.count_documents(query),
+            lambda result: result,
+        )
 
         if sort_by:
             validate_field_name(sort_by)
@@ -231,7 +314,16 @@ class RecordRepository:
         if sort_spec:
             cursor = cursor.sort(sort_spec)
 
+        start_time = start_mongo_timer()
         results = await cursor.to_list(length=limit)
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(results),
+            extra={"limit": limit, "offset": offset, "sort": sort_spec},
+        )
 
         return stringify_ids_list(results), total_count
 
@@ -239,17 +331,44 @@ class RecordRepository:
         self,
         instance_uuid: str,
         record_uuid: str,
+        template_uuid: Optional[str] = None,
     ) -> None:
 
-        query = build_record_query(instance_uuid, record_uuid)
-        result = await self.collection.delete_one(query)
+        query = with_active_filter(build_record_query(instance_uuid, record_uuid))
+        if template_uuid is not None:
+            query["template_uuid"] = str(template_uuid)
+        update = {"$set": {"is_deleted": True}}
+        result = await execute_logged_mongo_call(
+            self.collection,
+            "update_one",
+            query,
+            lambda: self.collection.update_one(query, update),
+            lambda item: item.modified_count,
+            update=update,
+        )
 
-        if result.deleted_count == 0:
+        if result.matched_count == 0:
             raise RecordNotFoundError(
                 record_uuid=record_uuid,
                 instance_uuid=instance_uuid,
                 message=f"Запись '{record_uuid}' не найдена для удаления.",
             )
+
+        history_query = {
+            "instance_uuid": str(instance_uuid),
+            "record_uuid": str(record_uuid),
+        }
+        history_update = {"$set": {"is_deleted": True}}
+        await execute_logged_mongo_call(
+            self.history_collection,
+            "update_many",
+            history_query,
+            lambda: self.history_collection.update_many(
+                history_query, history_update
+            ),
+            lambda item: item.modified_count,
+            update=history_update,
+        )
 
     async def get_records_by_uuids(
         self,
@@ -265,15 +384,25 @@ class RecordRepository:
             "instance_uuid": str(instance_uuid),
             "_id": {"$in": [str(record_uuid) for record_uuid in record_uuids]},
         }
+        query = with_active_filter(query)
         if template_uuid is not None:
             query["template_uuid"] = str(template_uuid)
 
         cursor = self.collection.find(query)
         result_map = {}
+        start_time = start_mongo_timer()
 
         async for record in cursor:
             stringify_id(record)
             result_map[record["_id"]] = record
+
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(result_map),
+        )
 
         return result_map
 
@@ -287,6 +416,108 @@ class RecordRepository:
         Ищет запись по динамическому полю.
         Ожидается, что field_name уже содержит префикс (например, 'data.qr_code').
         """
-        query = {"instance_uuid": str(instance_uuid), field_name: value}
-        record = await self.collection.find_one(query)
+        query = with_active_filter(
+            {"instance_uuid": str(instance_uuid), field_name: value}
+        )
+        record = await execute_logged_mongo_call(
+            self.collection,
+            "find_one",
+            query,
+            lambda: self.collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
         return stringify_id(record) if record else None
+
+    async def get_deleted_records(
+        self,
+        instance_uuid: str,
+        template_uuid: str,
+        filters: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_descending: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        filters = filters or {}
+        validate_dict_keys(filters)
+
+        query = with_deleted_filter(
+            build_records_search_query(instance_uuid, template_uuid, filters)
+        )
+
+        total_count = await execute_logged_mongo_call(
+            self.collection,
+            "count_documents",
+            query,
+            lambda: self.collection.count_documents(query),
+            lambda result: result,
+        )
+
+        if sort_by:
+            validate_field_name(sort_by)
+
+        sort_spec = build_records_sort_spec(sort_by, sort_descending)
+        cursor = self.collection.find(query).skip(offset).limit(limit)
+        if sort_spec:
+            cursor = cursor.sort(sort_spec)
+
+        start_time = start_mongo_timer()
+        results = await cursor.to_list(length=limit)
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(results),
+            extra={"limit": limit, "offset": offset, "sort": sort_spec},
+        )
+
+        return stringify_ids_list(results), total_count
+
+    async def restore_record(
+        self,
+        instance_uuid: str,
+        record_uuid: str,
+        template_uuid: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        query = with_deleted_filter(build_record_query(instance_uuid, record_uuid))
+        if template_uuid is not None:
+            query["template_uuid"] = str(template_uuid)
+
+        update = {"$set": {"is_deleted": False}}
+        restored_record = await execute_logged_mongo_call(
+            self.collection,
+            "find_one_and_update",
+            query,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
+            update=update,
+        )
+
+        if not restored_record:
+            raise RecordNotFoundError(
+                record_uuid=record_uuid,
+                instance_uuid=instance_uuid,
+                message=f"Удаленная запись '{record_uuid}' не найдена для восстановления.",
+            )
+
+        history_query = with_deleted_filter(
+            {"instance_uuid": str(instance_uuid), "record_uuid": str(record_uuid)}
+        )
+        history_update = {"$set": {"is_deleted": False}}
+        await execute_logged_mongo_call(
+            self.history_collection,
+            "update_many",
+            history_query,
+            lambda: self.history_collection.update_many(
+                history_query, history_update
+            ),
+            lambda item: item.modified_count,
+            update=history_update,
+        )
+
+        return stringify_id(restored_record)

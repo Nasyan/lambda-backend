@@ -349,3 +349,40 @@ class TemplateService:
             instance_uuid=str(instance_uuid),
             params=params,  # Прокидываем дальше (может быть None)
         )
+
+    async def get_deleted_templates(
+        self,
+        instance_uuid: UUID,
+        params: Optional[ListParameters] = None,
+    ) -> list[dict[str, Any]]:
+        return await self.template_repo.get_deleted_templates(
+            instance_uuid=str(instance_uuid),
+            params=params,
+        )
+
+    async def restore_template(
+        self,
+        instance_uuid: UUID,
+        template_uuid: UUID,
+    ) -> Dict[str, Any]:
+        str_instance = str(instance_uuid)
+        str_template = str(template_uuid)
+
+        deleted_template = await self.template_repo.get_deleted_template_by_uuid(
+            instance_uuid=str_instance,
+            template_uuid=str_template,
+        )
+        existing_template = await self.template_repo.find_by_name(
+            instance_uuid=str_instance,
+            name=deleted_template["name"],
+        )
+        if existing_template:
+            raise DuplicateTemplateNameException(
+                name=deleted_template["name"],
+                instance_uuid=str_instance,
+            )
+
+        return await self.template_repo.restore_template(
+            instance_uuid=str_instance,
+            template_uuid=str_template,
+        )
