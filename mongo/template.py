@@ -7,7 +7,9 @@ from pymongo import ReturnDocument
 from mongo.tools.builders import build_template_document
 
 # Импортируем наши новые профессиональные доменные ошибки
-from mongo.exceptions.template import TemplateNotFoundError
+from mongo.exceptions.template import TemplateNotFoundError, TemplateValidationError
+from mongo.tools.exceptions import SchemaValidationError
+from mongo.tools.validators import validate_schema_definition
 from mongo.tools.utils import (
     normalize_template,
     build_update_meta,
@@ -21,6 +23,22 @@ from logs.mongo import (
     summarize_mongo_document,
 )
 from middleware.schemas import ListParameters
+
+
+def _validate_template_schema(
+    schema: Dict[str, Any], column_name: Optional[str] = None
+) -> None:
+    try:
+        validate_schema_definition(schema)
+    except SchemaValidationError as exc:
+        details: Dict[str, Any] = {"reason": str(exc)}
+        if column_name is not None:
+            details["column_name"] = column_name
+            message = f"Ошибка валидации колонки '{column_name}': {str(exc)}"
+        else:
+            message = f"Ошибка валидации схемы шаблона: {str(exc)}"
+
+        raise TemplateValidationError(message=message, details=details) from exc
 
 
 class TemplateRepository:
@@ -62,7 +80,9 @@ class TemplateRepository:
     async def create_template(
         self, instance_uuid: str, name: str, schema: Dict[str, Any], user_uuid: str
     ) -> Dict[str, Any]:
-        """Глупая вставка шаблона. Схема обязана быть провалидирована сервисом."""
+        """Вставка шаблона с последним рубежом валидации схемы."""
+        _validate_template_schema(schema)
+
         template_document = build_template_document(
             instance_uuid=instance_uuid,
             name=name,
@@ -214,7 +234,9 @@ class TemplateRepository:
         field_meta: Dict[str, Any],
         user_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Глупый $set новой колонки. Метаданные обязаны быть провалидированы сервисом."""
+        """$set новой колонки с последним рубежом валидации метаданных."""
+        _validate_template_schema({column_name: field_meta}, column_name=column_name)
+
         query = with_active_filter(
             {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
         )

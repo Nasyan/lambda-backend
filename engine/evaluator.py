@@ -4,7 +4,7 @@ import re
 import structlog
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from engine.ast import (
     ASTNode,
