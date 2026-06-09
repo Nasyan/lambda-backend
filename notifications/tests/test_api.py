@@ -153,6 +153,7 @@ class TestNotification:
             "body": "Пользователь {{ client.full_name }} совершил уже {{ client.orders_count }} заказов. Выдайте бонус!",
             "channels": ["crm"],
             "recipients_config": {"type": "static", "uuids": [user_uuid]},
+            "entity_mappings": {"client": client_template_uuid},
         }
         noti_resp = await test_client.post(
             f"/instances/{instance_uuid}/notifications/templates",
@@ -232,6 +233,69 @@ class TestNotification:
                 "schema_validation_error",
                 "does not exist",
             ]
+        )
+
+    @pytest.mark.asyncio
+    async def test_notification_template_validates_variables_against_crm_schema(
+        self, test_client, create_test_environment
+    ):
+        """
+        При сохранении шаблона уведомления сервер парсит {{...}} и проверяет поля
+        по схеме привязанной CRM-таблицы в Mongo. Валидное поле сохраняется,
+        несуществующее поле возвращает 400 до записи в Postgres.
+        """
+        user_uuid, instance_uuid, headers = await create_test_environment()
+
+        crm_template_resp = await test_client.post(
+            f"/instances/{instance_uuid}/templates",
+            json={
+                "name": "Клиенты для уведомлений",
+                "schema": {
+                    "full_name": {"type": "string", "required": True},
+                    "email": {"type": "string", "required": False},
+                },
+            },
+            headers=headers,
+        )
+        assert crm_template_resp.status_code == 201, crm_template_resp.text
+        crm_template_uuid = crm_template_resp.json()["_id"]
+
+        valid_resp = await test_client.post(
+            f"/instances/{instance_uuid}/notifications/templates",
+            json={
+                "name": "Валидная переменная",
+                "title": "Клиент {{data.full_name}}",
+                "body": "Email: {{email}}",
+                "channels": ["crm"],
+                "recipients_config": {"type": "static", "uuids": [user_uuid]},
+                "source_template_uuid": crm_template_uuid,
+            },
+            headers=headers,
+        )
+        assert valid_resp.status_code == 201, valid_resp.text
+
+        invalid_resp = await test_client.post(
+            f"/instances/{instance_uuid}/notifications/templates",
+            json={
+                "name": "Сломанная переменная",
+                "title": "Клиент {{data.missing_field}}",
+                "body": "Поле отсутствует в CRM-схеме",
+                "channels": ["crm"],
+                "recipients_config": {"type": "static", "uuids": [user_uuid]},
+                "source_template_uuid": crm_template_uuid,
+            },
+            headers=headers,
+        )
+        assert invalid_resp.status_code == 400, invalid_resp.text
+        assert "missing_field" in invalid_resp.text
+
+        list_resp = await test_client.get(
+            f"/instances/{instance_uuid}/notifications/templates",
+            headers=headers,
+        )
+        assert list_resp.status_code == 200
+        assert all(
+            item["name"] != "Сломанная переменная" for item in list_resp.json()
         )
 
 

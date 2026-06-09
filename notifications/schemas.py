@@ -22,6 +22,14 @@ class TemplateCreate(BaseModel):
         default_factory=dict,
         description="Конфигурация получателей: статические UUID или правила вычисления",
     )
+    source_template_uuid: UUID | None = Field(
+        default=None,
+        description="UUID CRM-таблицы, по схеме которой валидируются {{field}} и {{data.field}}",
+    )
+    entity_mappings: Dict[str, UUID] | None = Field(
+        default=None,
+        description="Маппинг alias -> UUID CRM-таблицы для масок вида {{client.name}}",
+    )
 
 
 class TemplateUpdate(BaseModel):
@@ -30,6 +38,8 @@ class TemplateUpdate(BaseModel):
     body: str | None = None
     channels: List[str] | None = None
     recipients_config: Dict[str, Any] | None = None
+    source_template_uuid: UUID | None = None
+    entity_mappings: Dict[str, UUID] | None = None
 
 
 class TemplateResponse(BaseModel):

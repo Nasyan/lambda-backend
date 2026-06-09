@@ -9,7 +9,12 @@ from sqlalchemy import select
 
 from notifications.dispatcher import NotificationDispatcher
 from notifications.models import NotificationTemplate
+from engine.ast import parse_ast
+from engine.batch_loader import BatchDataLoader
+from engine.evaluator import ASTEvaluator, EvaluationScope
+from engine.utils import resolve_dot_notation
 from mongo.tools.utils import with_active_filter
+from users.models import Users, UserRole
 from logs.mongo import (
     execute_logged_mongo_call,
     summarize_mongo_document,
@@ -44,40 +49,170 @@ class ActionRegistry:
     """
 
     @staticmethod
-    def _resolve_recipients(
-        config: Dict[str, Any], target: Dict[str, Any]
+    async def _resolve_recipients(
+        config: Dict[str, Any],
+        target: Dict[str, Any],
+        db: AsyncIOMotorDatabase,
+        instance_uuid: str,
+        pg_session: Any = None,
     ) -> List[str]:
         """
         Внутренний метод для парсинга recipients_config (из поля JSONB шаблона).
         Вычисляет финальный список строк (UUID сотрудников, email или tg_name)
         на основе переданного Mongo-документа (target).
         """
+        if not config:
+            return []
+
         config_type = config.get("type", "static")
 
         if config_type == "static":
-            # Вариант 1: Жестко заданный список UUID сотрудников в шаблоне
-            return config.get("uuids", [])
+            return ActionRegistry._dedupe_recipients(
+                ActionRegistry._configured_recipient_values(config)
+            )
 
-        elif config_type == "ast_tree":
-            # Вариант 2: Динамическое вычисление через ваше AST-дерево.
-            # Сюда залетает структура вашего AST-дерева.
-            ast_root = config.get("tree", {})  # noqa! F841
+        if config_type in {
+            "users",
+            "employees",
+            "selected_users",
+            "specific_users",
+            "all_users",
+            "all_employees",
+        }:
+            return await ActionRegistry._resolve_user_recipients(
+                config=config,
+                instance_uuid=instance_uuid,
+                pg_session=pg_session,
+            )
 
-            # Пример интеграции с вашим AST-вычислителем (если он вынесен в отдельный модуль):
-            # return DynamicASTEvaluator.evaluate(ast_root, context=target)
+        if config_type == "ast_tree":
+            ast_root = config.get("tree")
+            contact_field = config.get("contact_field")
+            if not ast_root or not contact_field:
+                raise AutomationValidationError(
+                    action_name="create_crm_notification",
+                    instance_uuid=instance_uuid,
+                    reason=(
+                        "recipients_config типа 'ast_tree' требует поля "
+                        "'tree' и 'contact_field'."
+                    ),
+                )
 
-            # Простой пример-заглушка: если в конфиге лежит маска пути до поля в Mongo-документе
-            field_path = config.get(
-                "field_path"
-            )  # например: "{{data.responsible_manager_uuid}}"
-            if field_path:
-                resolved = ContextInterpolator.interpolate(field_path, target)
-                if isinstance(resolved, list):
-                    return [str(uid) for uid in resolved]
-                if resolved:
-                    return [str(resolved)]
+            data_loader = BatchDataLoader(mongo_db=db, instance_uuid=instance_uuid)
+            evaluator = ASTEvaluator(batch_loader=data_loader)
+            scope = EvaluationScope(
+                document=target or {},
+                instance_uuid=str(instance_uuid),
+            )
+            resolved = await evaluator.evaluate(parse_ast(ast_root), scope)
+            return ActionRegistry._dedupe_recipients(
+                ActionRegistry._extract_contact_values(resolved, contact_field)
+            )
+
+        field_path = config.get("field_path")
+        if field_path:
+            resolved = ContextInterpolator.interpolate(field_path, target)
+            return ActionRegistry._dedupe_recipients(
+                ActionRegistry._flatten_recipient_values(resolved)
+            )
 
         return []
+
+    @staticmethod
+    def _configured_recipient_values(config: Dict[str, Any]) -> List[Any]:
+        values: List[Any] = []
+        for key in (
+            "uuids",
+            "user_uuids",
+            "employee_uuids",
+            "emails",
+            "recipients",
+            "values",
+        ):
+            values.extend(ActionRegistry._flatten_recipient_values(config.get(key)))
+        return values
+
+    @staticmethod
+    async def _resolve_user_recipients(
+        config: Dict[str, Any],
+        instance_uuid: str,
+        pg_session: Any = None,
+    ) -> List[str]:
+        configured = ActionRegistry._configured_recipient_values(config)
+        if configured:
+            return ActionRegistry._dedupe_recipients(configured)
+
+        selection = config.get("selection")
+        if (
+            config.get("type") not in {"all_users", "all_employees"}
+            and selection
+            not in {
+                "all",
+                "all_active",
+                "all_users",
+                "all_employees",
+            }
+        ):
+            return []
+
+        if not pg_session:
+            raise AutomationValidationError(
+                action_name="create_crm_notification",
+                instance_uuid=instance_uuid,
+                reason="Для выбора всех сотрудников необходим pg_session.",
+            )
+
+        stmt = select(Users.uuid).where(
+            Users.instance_id == uuid.UUID(str(instance_uuid)),
+            Users.active.is_(True),
+            Users.role != UserRole.CLIENT,
+        )
+        result = await pg_session.execute(stmt)
+        return [str(user_uuid) for user_uuid in result.scalars().all()]
+
+    @staticmethod
+    def _extract_contact_values(resolved: Any, contact_field: str) -> List[Any]:
+        documents = resolved if isinstance(resolved, list) else [resolved]
+        values: List[Any] = []
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            value = ActionRegistry._extract_contact_value(document, contact_field)
+            values.extend(ActionRegistry._flatten_recipient_values(value))
+        return values
+
+    @staticmethod
+    def _extract_contact_value(document: Dict[str, Any], contact_field: str) -> Any:
+        if contact_field.startswith("data."):
+            return resolve_dot_notation(document, contact_field, default=None)
+        if contact_field in {"_id", "uuid"}:
+            direct_value = resolve_dot_notation(document, contact_field, default=None)
+            if direct_value is not None:
+                return direct_value
+        return resolve_dot_notation(document, f"data.{contact_field}", default=None)
+
+    @staticmethod
+    def _flatten_recipient_values(value: Any) -> List[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            flattened: List[Any] = []
+            for item in value:
+                flattened.extend(ActionRegistry._flatten_recipient_values(item))
+            return flattened
+        return [value]
+
+    @staticmethod
+    def _dedupe_recipients(values: List[Any]) -> List[str]:
+        recipients: List[str] = []
+        seen = set()
+        for value in values:
+            recipient = str(value).strip()
+            if not recipient or recipient in seen:
+                continue
+            seen.add(recipient)
+            recipients.append(recipient)
+        return recipients
 
     @staticmethod
     async def run_test_action(
@@ -372,8 +507,12 @@ class ActionRegistry:
         # 3. Проходим циклом по документам из MongoDB, которые вызвали триггер
         for target in targets:
             # Вычисляем получателей (парсинг дерева AST или получение статического списка)
-            recipients = ActionRegistry._resolve_recipients(
-                template.recipients_config, target
+            recipients = await ActionRegistry._resolve_recipients(
+                config=template.recipients_config,
+                target=target,
+                db=db,
+                instance_uuid=str(instance_uuid),
+                pg_session=pg_session,
             )
             if not recipients:
                 logger.warning(

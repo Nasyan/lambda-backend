@@ -12,7 +12,7 @@ TemplateIntegrityService — вторая половина бывшего Schema
 """
 
 import re
-from typing import Dict, Any, Set
+from typing import Dict, Any, Optional, Set
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import or_, select
 from uuid import UUID
@@ -32,6 +32,7 @@ from engine.exceptions.integrity import (
 from logs.decorators import trace_action
 
 VARIABLE_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\.([a-zA-Z0-9_\.]+)\s*\}\}")
+NOTIFICATION_PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([\w\.]+)\s*\}\}")
 
 
 class TemplateIntegrityService:
@@ -49,49 +50,89 @@ class TemplateIntegrityService:
         instance_uuid: UUID,
         title: str,
         body: str,
-        entity_mappings: Dict[str, Any],
+        entity_mappings: Optional[Dict[str, Any]],
         template_repo: Any,
+        source_template_uuid: Optional[UUID | str] = None,
     ) -> None:
         """
         Парсит текст уведомления и проверяет существование no-code таблиц и колонок в MongoDB.
         Вызывается на этапе POST / PATCH запросов в роутере уведомлений.
         """
         all_text = f"{title or ''} {body or ''}"
-        matches = VARIABLE_PATTERN.findall(all_text)
+        placeholders = sorted(set(NOTIFICATION_PLACEHOLDER_PATTERN.findall(all_text)))
 
-        if not matches:
+        if not placeholders:
             return
 
         mappings = entity_mappings or {}
+        template_cache: Dict[str, Dict[str, Any]] = {}
 
-        for entity_alias, field_path in matches:
-            if entity_alias not in mappings:
-                raise SchemaValidationError(
-                    reason=f"В тексте шаблона используется сущность '{entity_alias}', но для неё отсутствует маппинг в 'entity_mappings'.",
-                    invalid_fields=[entity_alias],
-                    target_context="entity_mappings",
-                )
-
-            template_uuid = mappings[entity_alias]
-
+        async def _get_schema_template(template_uuid: UUID | str) -> Dict[str, Any]:
+            cache_key = str(template_uuid)
+            if cache_key in template_cache:
+                return template_cache[cache_key]
             template = await template_repo.get_template(
-                instance_uuid=str(instance_uuid), template_uuid=str(template_uuid)
+                instance_uuid=str(instance_uuid), template_uuid=cache_key
             )
-            if not template:
-                raise SchemaValidationError(
-                    reason=f"No-Code таблица с UUID '{template_uuid}' (алиас '{entity_alias}') не найдена в текущем пространстве.",
-                    invalid_fields=[entity_alias],
-                    target_context="entity_mappings",
-                )
+            template_cache[cache_key] = template
+            return template
 
+        async def _validate_field(
+            template_uuid: UUID | str,
+            field_path: str,
+            raw_placeholder: str,
+            target_context: str,
+        ) -> None:
+            template = await _get_schema_template(template_uuid)
             schema = template.get("schema", {})
             base_col = field_path.split(".")[0]
             if base_col not in schema:
                 raise SchemaValidationError(
-                    reason=f"Поле '{field_path}' не существует в структуре таблицы '{template.get('name')}'.",
-                    invalid_fields=[field_path],
+                    reason=(
+                        f"Поле '{field_path}' из маски '{{{{{raw_placeholder}}}}}' "
+                        f"не существует в структуре таблицы '{template.get('name')}'."
+                    ),
+                    invalid_fields=[raw_placeholder],
+                    target_context=target_context,
+                )
+
+        for placeholder in placeholders:
+            parts = placeholder.split(".")
+            if len(parts) > 1 and parts[0] in mappings:
+                await _validate_field(
+                    template_uuid=mappings[parts[0]],
+                    field_path=".".join(parts[1:]),
+                    raw_placeholder=placeholder,
                     target_context="notification_template_fields",
                 )
+                continue
+
+            if source_template_uuid:
+                field_path = cls._normalize_notification_placeholder(placeholder)
+                await _validate_field(
+                    template_uuid=source_template_uuid,
+                    field_path=field_path,
+                    raw_placeholder=placeholder,
+                    target_context="notification_template_fields",
+                )
+                continue
+
+            missing_context = parts[0] if len(parts) > 1 else str(placeholder)
+            raise SchemaValidationError(
+                reason=(
+                    f"В тексте шаблона используется маска '{{{{{placeholder}}}}}', "
+                    "но не передан source_template_uuid или entity_mappings для проверки CRM-схемы."
+                ),
+                invalid_fields=[missing_context],
+                target_context="notification_template_binding",
+            )
+
+    @staticmethod
+    def _normalize_notification_placeholder(placeholder: str) -> str:
+        for prefix in ("data.", "$new.", "$old."):
+            if placeholder.startswith(prefix):
+                return placeholder[len(prefix) :]
+        return placeholder
 
     @classmethod
     @trace_action(name="Integrity::Check_Template_Deletion")
@@ -270,7 +311,7 @@ class TemplateIntegrityService:
             )
         )
         for nt in result_notifications.scalars().all():
-            nt_mappings = nt.entity_mappings or {}
+            nt_mappings = getattr(nt, "entity_mappings", None) or {}
             aliases_for_template = [
                 alias
                 for alias, t_uuid in nt_mappings.items()

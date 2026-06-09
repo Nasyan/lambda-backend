@@ -243,9 +243,10 @@ class TriggerCreate(BaseModel):
                     "Для AUTOMATION необходимо указать action_name (например, create_crm_notification)"
                 )
 
-            if values.get("event_type") == EventType.CRON.value and not values.get(
-                "cron_expression"
-            ):
+            if values.get("event_type") in {
+                EventType.CRON.value,
+                EventType.ON_TIME.value,
+            } and not values.get("cron_expression"):
                 raise ValueError("Для события CRON необходимо указать cron_expression")
 
             # Глубокая валидация параметров под конкретный экшен уведомлений

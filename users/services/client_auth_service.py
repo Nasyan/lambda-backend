@@ -8,7 +8,6 @@ from sqlalchemy.future import select
 from users.models import Users, UserRole, Instances
 from jsonwebtoken.utils import encode_jwt, decode_jwt
 from workers.email_tasks import send_email
-from config import SENDER_EMAIL, EMAIL_PASSWORD
 
 # Импортируем профессиональные доменные исключения
 from users.exceptions.client_auth_service import (
@@ -74,8 +73,6 @@ class ClientAuthService:
         await self.redis_auth.save_verification_code(payload.email, verification_code)
 
         send_email.send(
-            sender_email=SENDER_EMAIL,
-            password=EMAIL_PASSWORD,
             receiver_email=payload.email,
             subject="Код подтверждения (Магазин)",
             body=f"Ваш код для входа в магазин: {verification_code}",
@@ -106,8 +103,6 @@ class ClientAuthService:
         await self.redis_auth.save_verification_code(payload.email, new_code)
 
         send_email.send(
-            sender_email=SENDER_EMAIL,
-            password=EMAIL_PASSWORD,
             receiver_email=payload.email,
             subject="Новый код подтверждения (Магазин)",
             body=f"Ваш новый код: {new_code}",
