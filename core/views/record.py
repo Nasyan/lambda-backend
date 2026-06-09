@@ -83,6 +83,41 @@ def create_records_router(tool: AppTools) -> APIRouter:
             offset=offset,
         )
 
+    @router.get("/deleted", response_model=PaginatedRecordsResponse)
+    async def get_deleted_records(
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+        sort_by: Optional[str] = Query(
+            None, description="Имя поля внутри data для сортировки"
+        ),
+        descending: bool = Query(False, description="Сортировка по убыванию"),
+        filters: Optional[str] = Query(
+            None, description="JSON-строка фильтров. Например: {'age': {'$gt': 25}}"
+        ),
+        current_user=Depends(RequireTool(tool)),
+        record_service: RecordService = Depends(get_record_service),
+    ):
+        parsed_filters = {}
+        if filters:
+            try:
+                parsed_filters = json.loads(filters)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400, detail="Invalid JSON format in filters parameter"
+                )
+
+        return await record_service.get_deleted_records_list(
+            instance_uuid=instance_uuid,
+            template_uuid=template_uuid,
+            filters=parsed_filters,
+            sort_by=sort_by,
+            descending=descending,
+            limit=limit,
+            offset=offset,
+        )
+
     @router.patch("/{record_uuid}", response_model=RecordResponse)
     async def update_record(
         instance_uuid: UUID,
@@ -102,6 +137,34 @@ def create_records_router(tool: AppTools) -> APIRouter:
             user_uuid=current_user.uuid,
             new_data=payload.data,
             s3_service=s3_service,
+        )
+
+    @router.delete("/{record_uuid}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_record(
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        record_uuid: UUID,
+        current_user=Depends(RequireTool(tool)),
+        record_service: RecordService = Depends(get_record_service),
+    ):
+        await record_service.delete_record(
+            instance_uuid=instance_uuid,
+            template_uuid=template_uuid,
+            record_uuid=record_uuid,
+        )
+
+    @router.post("/{record_uuid}/restore", response_model=RecordResponse)
+    async def restore_record(
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        record_uuid: UUID,
+        current_user=Depends(RequireTool(tool)),
+        record_service: RecordService = Depends(get_record_service),
+    ):
+        return await record_service.restore_record(
+            instance_uuid=instance_uuid,
+            template_uuid=template_uuid,
+            record_uuid=record_uuid,
         )
 
     return router

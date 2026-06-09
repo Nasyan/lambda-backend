@@ -13,6 +13,8 @@ from engine.event_receptor import EventReceptor
 from engine.ast import ASTNode, parse_ast
 from engine.evaluator import FormulaEvaluator
 from mongo.template import TemplateRepository
+from mongo.tools.utils import with_active_filter
+from logs.mongo import log_mongo_query, start_mongo_timer
 
 # Импортируем наши профессиональные исключения
 from triggers.exceptions.action import AutomationExecutionError, SystemContractViolation
@@ -338,13 +340,26 @@ class AutomationService:
                 }
                 if last_id is not None:
                     batch_query["_id"] = {"$gt": last_id}
+                batch_query = with_active_filter(batch_query)
 
+                start_time = start_mongo_timer()
                 batch = (
                     await mongo_db["records"]
                     .find(batch_query)
                     .sort("_id", 1)
                     .limit(cls.CRON_BATCH_SIZE)
                     .to_list(cls.CRON_BATCH_SIZE)
+                )
+                log_mongo_query(
+                    mongo_db["records"],
+                    "find",
+                    batch_query,
+                    start_time,
+                    len(batch),
+                    extra={
+                        "limit": cls.CRON_BATCH_SIZE,
+                        "sort": [("_id", 1)],
+                    },
                 )
                 if not batch:
                     break

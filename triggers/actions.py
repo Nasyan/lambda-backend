@@ -9,6 +9,11 @@ from sqlalchemy import select
 
 from notifications.dispatcher import NotificationDispatcher
 from notifications.models import NotificationTemplate
+from mongo.tools.utils import with_active_filter
+from logs.mongo import (
+    execute_logged_mongo_call,
+    summarize_mongo_document,
+)
 
 # Импортируем доменные исключения автоматизации
 from triggers.exceptions.action import (
@@ -137,11 +142,19 @@ class ActionRegistry:
             "instance_uuid": str(instance_uuid),
             "template_uuid": str(target_template_uuid),
             "data": payload_data,
+            "is_deleted": False,
             "created_by": "system_automation",
         }
 
         try:
-            await db["records"].insert_one(record_document)
+            records_collection = db["records"]
+            await execute_logged_mongo_call(
+                records_collection,
+                "insert_one",
+                summarize_mongo_document(record_document),
+                lambda: records_collection.insert_one(record_document),
+                lambda _: 1,
+            )
         except Exception as e:
             raise AutomationExecutionError(
                 action_name="mongo_insert",
@@ -185,9 +198,20 @@ class ActionRegistry:
                 full_filter[k] = v
             else:
                 full_filter[f"data.{k}"] = v
+        full_filter = with_active_filter(full_filter)
 
         try:
-            result = await db["records"].update_many(full_filter, interpolated_update)
+            records_collection = db["records"]
+            result = await execute_logged_mongo_call(
+                records_collection,
+                "update_many",
+                full_filter,
+                lambda: records_collection.update_many(
+                    full_filter, interpolated_update
+                ),
+                lambda item: item.modified_count,
+                update=interpolated_update,
+            )
         except Exception as e:
             raise AutomationExecutionError(
                 action_name="mongo_update",
@@ -230,6 +254,7 @@ class ActionRegistry:
         for field in search_fields:
             if field in payload_data:
                 query_filter[f"data.{field}"] = payload_data[field]
+        query_filter = with_active_filter(query_filter)
 
         generated_uuid = str(uuid.uuid4())
 
@@ -245,6 +270,7 @@ class ActionRegistry:
                 "uuid": generated_uuid,
                 "instance_uuid": str(instance_uuid),
                 "template_uuid": str(target_template_uuid),
+                "is_deleted": False,
                 "created_by": "system_automation_upsert",
             },
             # $inc атомарно прибавит 1 к версии.
@@ -254,8 +280,16 @@ class ActionRegistry:
 
         try:
             # Делаем один единственный вызов в БД
-            result = await db["records"].update_one(
-                query_filter, update_operations, upsert=True
+            records_collection = db["records"]
+            result = await execute_logged_mongo_call(
+                records_collection,
+                "update_one",
+                query_filter,
+                lambda: records_collection.update_one(
+                    query_filter, update_operations, upsert=True
+                ),
+                lambda item: item.modified_count + (1 if item.upserted_id else 0),
+                update=update_operations,
             )
         except Exception as e:
             raise AutomationExecutionError(

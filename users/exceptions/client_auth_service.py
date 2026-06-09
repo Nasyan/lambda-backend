@@ -13,6 +13,7 @@ class ClientServiceDomainException(BaseAppException):
 class StorefrontInstanceNotFoundError(ClientServiceDomainException):
     """Выбрасывается, если инстанс магазина/витрины не существует."""
 
+    status_code = 404
     error_code = "STOREFRONT_INSTANCE_NOT_FOUND"
     message = "Запрошенная витрина магазина не найдена."
 
@@ -25,6 +26,7 @@ class StorefrontInstanceNotFoundError(ClientServiceDomainException):
 class ClientAlreadyRegisteredError(ClientServiceDomainException):
     """Выбрасывается, если клиент с таким email уже активен в системе."""
 
+    status_code = 400
     error_code = "CLIENT_ALREADY_REGISTERED"
     message = "Пользователь с таким email-адресом уже зарегистрирован."
 
@@ -35,6 +37,7 @@ class ClientAlreadyRegisteredError(ClientServiceDomainException):
 class ClientNotFoundError(ClientServiceDomainException):
     """Выбрасывается, если запись пользователя отсутствует при верификации."""
 
+    status_code = 404
     error_code = "CLIENT_NOT_FOUND"
     message = "Профиль клиента не найден."
 
@@ -45,6 +48,7 @@ class ClientNotFoundError(ClientServiceDomainException):
 class InvalidResendRequestError(ClientServiceDomainException):
     """Выбрасывается, если код запрашивается повторно для несуществующего или уже активного аккаунта."""
 
+    status_code = 400
     error_code = "INVALID_RESEND_REQUEST"
     message = "Некорректный запрос повторной отправки кода (аккаунт активен или не зарегистрирован)."
 
@@ -55,6 +59,7 @@ class InvalidResendRequestError(ClientServiceDomainException):
 class InvalidClientCredentialsError(ClientServiceDomainException):
     """Выбрасывается при неверной паре логин/пароль или попытке обойти ограничения ролей."""
 
+    status_code = 400
     error_code = "INVALID_CLIENT_CREDENTIALS"
     message = "Неверный email или пароль."
 
@@ -65,6 +70,7 @@ class InvalidClientCredentialsError(ClientServiceDomainException):
 class InvalidClientTokenSessionError(ClientServiceDomainException):
     """Выбрасывается, если refresh-токен клиента не валиден, протух или роль скомпрометирована."""
 
+    status_code = 401
     error_code = "INVALID_CLIENT_TOKEN_SESSION"
     message = "Сессия авторизации клиента недействительна или истекла."
 

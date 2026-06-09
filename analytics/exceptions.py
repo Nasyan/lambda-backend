@@ -14,6 +14,7 @@ class AnalyticsException(BaseAppException):
 class WidgetNotFoundError(AnalyticsException):
     """Выбрасывается, когда виджет не найден в базе данных или принадлежит другому инстансу."""
 
+    status_code = 404
     error_code = "WIDGET_NOT_FOUND"
     message = "Виджет аналитики не найден или доступ к нему ограничен."
 
@@ -33,6 +34,7 @@ class WidgetNotFoundError(AnalyticsException):
 class AnalyticsCompilerException(BaseAppException):
     """Базовое исключение для ошибок компиляции AST в пайплайны СУБД."""
 
+    status_code = 400
     error_code = "ANALYTICS_COMPILER_ERROR"
     message = "Ошибка при сборке аналитического запроса."
 

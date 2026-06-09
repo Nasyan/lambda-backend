@@ -36,6 +36,7 @@ async def init_admin(session: AsyncSession) -> None:
 
     # 2. Если админ не найден, создаем его
     if admin_user is None:
+        print("Creating default superadmin...")
         new_admin = Users()
         new_admin.email = SENDER_EMAIL
         new_admin.password = ADMIN_PASSWORD  # Сеттер сам захеширует пароль через bcrypt
@@ -45,5 +46,6 @@ async def init_admin(session: AsyncSession) -> None:
 
         session.add(new_admin)
         await session.commit()
+        print(f"Superadmin successfully created with email: {SENDER_EMAIL}")
     else:
-        pass
+        print("Superadmin already exists. Skipping initialization.")

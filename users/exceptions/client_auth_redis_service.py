@@ -12,6 +12,7 @@ class ClientAuthDomainException(BaseAppException):
 class ClientAuthRateLimitExceededError(ClientAuthDomainException):
     """Выбрасывается при нарушении анти-спам лимита на отправку кодов публичной формы."""
 
+    status_code = 429
     error_code = "CLIENT_AUTH_RATE_LIMIT_EXCEEDED"
     message = "Слишком много запросов. Пожалуйста, подождите."
 
@@ -25,6 +26,7 @@ class ClientAuthRateLimitExceededError(ClientAuthDomainException):
 class ClientVerificationCodeExpiredError(ClientAuthDomainException):
     """Выбрасывается, если код подтверждения публичного пользователя устарел или не запрашивался."""
 
+    status_code = 400
     error_code = "CLIENT_VERIFICATION_CODE_EXPIRED"
     message = "Код подтверждения устарел или не запрашивался."
 
@@ -35,6 +37,7 @@ class ClientVerificationCodeExpiredError(ClientAuthDomainException):
 class ClientInvalidVerificationCodeError(ClientAuthDomainException):
     """Выбрасывается при вводе неверного кода подтверждения клиентом."""
 
+    status_code = 400
     error_code = "CLIENT_INVALID_VERIFICATION_CODE"
     message = "Введен неверный код подтверждения."
 

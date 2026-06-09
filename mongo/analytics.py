@@ -3,6 +3,12 @@
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from analytics.schemas import ChartConfigPayload
+from mongo.tools.utils import with_active_filter
+from logs.mongo import (
+    execute_logged_mongo_call,
+    log_mongo_query,
+    start_mongo_timer,
+)
 
 
 class AnalyticsRepository:
@@ -21,10 +27,24 @@ class AnalyticsRepository:
         Достает чистую схему полей (columns metadata) для конкретного шаблона.
         Если шаблон не найден, возвращает пустой словарь для обратной совместимости.
         """
-        template = await self.templates_collection.find_one({"_id": template_uuid})
+        query = with_active_filter({"_id": template_uuid})
+        template = await execute_logged_mongo_call(
+            self.templates_collection,
+            "find_one",
+            query,
+            lambda: self.templates_collection.find_one(query),
+            lambda result: 1 if result else 0,
+        )
         if not template:
             # Попробуем поискать по строковому uuid или полю uuid, если у вас кастомный id
-            template = await self.templates_collection.find_one({"uuid": template_uuid})
+            fallback_query = with_active_filter({"uuid": template_uuid})
+            template = await execute_logged_mongo_call(
+                self.templates_collection,
+                "find_one",
+                fallback_query,
+                lambda: self.templates_collection.find_one(fallback_query),
+                lambda result: 1 if result else 0,
+            )
 
         if template and "schema" in template:
             return template["schema"]
@@ -55,5 +75,15 @@ class AnalyticsRepository:
         pipeline = builder.compile_chart(config=config, ast_filter=ast_filter)
         pipeline.append({"$limit": limit_data_points})
 
+        start_time = start_mongo_timer()
         cursor = self.collection.aggregate(pipeline)
-        return await cursor.to_list(length=limit_data_points)
+        records = await cursor.to_list(length=limit_data_points)
+        log_mongo_query(
+            self.collection,
+            "aggregate",
+            pipeline,
+            start_time,
+            len(records),
+            extra={"limit": limit_data_points},
+        )
+        return records

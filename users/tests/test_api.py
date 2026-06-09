@@ -39,7 +39,7 @@ class TestUsersAuth:
         user_data = user_factory()
         email = user_data["email"]
 
-        # Имитируем админский инвайт (Перешли на современный .set с ex=)
+        # Имитируем админский инвайт (Используем актуальный метод .set с аргументом ex)
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
         await redis_email_db.set(
             name=invite_redis_key, value=str(test_instance.uuid), ex=3600
@@ -128,7 +128,6 @@ class TestUsersAuth:
         email = user_data["email"]
 
         redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        # Перешли на современный .set с ex=
         await redis_email_db.set(
             name=redis_key, value="corrupted_non_uuid_string", ex=3600
         )
@@ -157,7 +156,6 @@ class TestUsersAuth:
         email = user_data["email"]
 
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        # Перешли на современный .set с ex=
         await redis_email_db.set(
             name=invite_redis_key, value=str(test_instance.uuid), ex=3600
         )
@@ -209,7 +207,6 @@ class TestUsersAuth:
         email = user_data["email"]
 
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        # Перешли на современный .set с ex=
         await redis_email_db.set(
             name=invite_redis_key, value=str(test_instance.uuid), ex=3600
         )
@@ -258,7 +255,6 @@ class TestUsersAuth:
         email = user_data["email"]
 
         invite_redis_key = generate_key(prefix=INVITE_PREFIX, sub=email)
-        # Перешли на современный .set с ex=
         await redis_email_db.set(
             name=invite_redis_key, value=str(test_instance.uuid), ex=3600
         )
@@ -320,7 +316,7 @@ class TestTokenRefreshFlow:
         assert "HttpOnly" in set_cookie_header
 
     async def test_refresh_tokens_success_flow(self, test_client, db_session):
-        """Успешный цикл обновления токенов без использования устаревшего аргумента cookies."""
+        """Успешный цикл обновления токенов с явной установкой куки в инстанс клиента."""
         import asyncio
 
         email = "cycle_tester@example.com"
@@ -335,16 +331,17 @@ class TestTokenRefreshFlow:
         refresh_token = test_client.cookies.get("refresh_token")
         assert refresh_token is not None
 
-        # Очищаем заголовки авторизации (например, Bearer токен, если он зашился в headers)
+        # Очищаем заголовки авторизации и куки клиента для честного теста
         test_client.headers.clear()
+        test_client.cookies.clear()
 
         # 🔥 Ждем чуть больше 1 секунды, чтобы exp у нового токена гарантированно изменился
         await asyncio.sleep(1.05)
 
-        # 2. Обновляем куки клиента явно (современный подход HTTPX)
-        test_client.cookies = {"refresh_token": refresh_token}
+        # 2. Устанавливаем куку напрямую в инстанс httpx.AsyncClient
+        test_client.cookies.set("refresh_token", refresh_token)
 
-        # 3. Делаем запрос на обновление — теперь он чистый и без варнингов
+        # Делаем запрос без аргумента cookies=...
         refresh_res = await test_client.post("/auth/refresh/")
 
         assert refresh_res.status_code == 200
@@ -362,7 +359,7 @@ class TestTokenRefreshFlow:
         """Попытка обновить токен без куки."""
         test_client.cookies.clear()
 
-        # Куки очищены, аргумент cookies={} удален, чтобы не триггерить варнинг
+        # Не передаем пустой словарь cookies={}, а просто вызываем эндпоинт без кук
         response = await test_client.post("/auth/refresh/")
 
         assert response.status_code == 401
@@ -381,8 +378,10 @@ class TestTokenRefreshFlow:
         }
         fake_cookie_token = encode_jwt(payload=bad_payload)
 
-        # Проставляем плохой токен напрямую в инстанс клиента
-        test_client.cookies = {"refresh_token": fake_cookie_token}
+        test_client.cookies.clear()
+        # Устанавливаем куку напрямую в инстанс клиента
+        test_client.cookies.set("refresh_token", fake_cookie_token)
+
         response = await test_client.post("/auth/refresh/")
 
         assert response.status_code == 401
@@ -402,8 +401,10 @@ class TestTokenRefreshFlow:
         user.active = False
         await db_session.commit()
 
-        # Проставляем токен в инстанс клиента перед отправкой
-        test_client.cookies = {"refresh_token": refresh_token}
+        test_client.cookies.clear()
+        # Устанавливаем сохраненный куки-токен напрямую в инстанс клиента
+        test_client.cookies.set("refresh_token", refresh_token)
+
         response = await test_client.post("/auth/refresh/")
 
         assert response.status_code == 401

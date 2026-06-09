@@ -11,7 +11,8 @@ from typing import Dict, Any, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from mongo.exceptions.template import TemplateNotFoundError
-from mongo.tools.utils import build_update_meta
+from mongo.tools.utils import build_update_meta, with_active_filter
+from logs.mongo import execute_logged_mongo_call
 
 
 class TriggerMetadataRepository:
@@ -27,33 +28,45 @@ class TriggerMetadataRepository:
         user_uuid: Optional[str] = None,
     ) -> None:
         """Атомарно внедряет или обновляет метаданные триггера внутри конкретной колонки шаблона."""
-        query = {
-            "_id": str(template_uuid),
-            "instance_uuid": str(instance_uuid),
-            f"schema.{column_name}": {"$exists": True},
-        }
+        query = with_active_filter(
+            {
+                "_id": str(template_uuid),
+                "instance_uuid": str(instance_uuid),
+                f"schema.{column_name}": {"$exists": True},
+            }
+        )
 
         # 1. Сначала удаляем старую копию триггера по его trigger_id
-        await self.collection.update_one(
-            query,
-            {
-                "$pull": {
-                    f"schema.{column_name}.triggers": {
-                        "trigger_id": str(trigger_data["trigger_id"])
-                    }
+        pull_update = {
+            "$pull": {
+                f"schema.{column_name}.triggers": {
+                    "trigger_id": str(trigger_data["trigger_id"])
                 }
-            },
+            }
+        }
+        await execute_logged_mongo_call(
+            self.collection,
+            "update_one",
+            query,
+            lambda: self.collection.update_one(query, pull_update),
+            lambda result: result.modified_count,
+            update=pull_update,
         )
 
         # 2. Пушим свежие метаданные триггера в массив
         set_data = build_update_meta(user_uuid)
 
-        result = await self.collection.update_one(
+        update = {
+            "$push": {f"schema.{column_name}.triggers": trigger_data},
+            "$set": set_data,
+        }
+        result = await execute_logged_mongo_call(
+            self.collection,
+            "update_one",
             query,
-            {
-                "$push": {f"schema.{column_name}.triggers": trigger_data},
-                "$set": set_data,
-            },
+            lambda: self.collection.update_one(query, update),
+            lambda item: item.modified_count,
+            update=update,
         )
 
         if result.matched_count == 0:
@@ -72,22 +85,29 @@ class TriggerMetadataRepository:
         user_uuid: Optional[str] = None,
     ) -> None:
         """Атомарно удаляет метаданные триггера из массива triggers конкретной колонки."""
-        query = {
-            "_id": str(template_uuid),
-            "instance_uuid": str(instance_uuid),
-            f"schema.{column_name}": {"$exists": True},
-        }
+        query = with_active_filter(
+            {
+                "_id": str(template_uuid),
+                "instance_uuid": str(instance_uuid),
+                f"schema.{column_name}": {"$exists": True},
+            }
+        )
 
         set_data = build_update_meta(user_uuid)
 
-        result = await self.collection.update_one(
-            query,
-            {
-                "$pull": {
-                    f"schema.{column_name}.triggers": {"trigger_id": str(trigger_id)}
-                },
-                "$set": set_data,
+        update = {
+            "$pull": {
+                f"schema.{column_name}.triggers": {"trigger_id": str(trigger_id)}
             },
+            "$set": set_data,
+        }
+        result = await execute_logged_mongo_call(
+            self.collection,
+            "update_one",
+            query,
+            lambda: self.collection.update_one(query, update),
+            lambda item: item.modified_count,
+            update=update,
         )
 
         if result.matched_count == 0:

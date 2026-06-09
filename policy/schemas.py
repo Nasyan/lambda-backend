@@ -39,4 +39,4 @@ class PolicyResponse(PolicyBase):
     id: UUID
     instance_uuid: UUID
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True)

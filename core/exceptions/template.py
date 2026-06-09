@@ -13,6 +13,7 @@ class TemplateDomainException(BaseAppException):
 class TemplateNotFoundException(TemplateDomainException):
     """Выбрасывается, когда запрашиваемый шаблон (low-code таблица) не найден."""
 
+    status_code = 404
     error_code = "TEMPLATE_NOT_FOUND"
     message = "Запрашиваемый шаблон таблицы не найден."
 
@@ -27,6 +28,7 @@ class TemplateNotFoundException(TemplateDomainException):
 class TemplateMutationError(TemplateDomainException):
     """Выбрасывается, когда изменение структуры (удаление/изменение колонки) небезопасно или нарушает схему."""
 
+    status_code = 422
     error_code = "TEMPLATE_MUTATION_ERROR"
 
     def __init__(
@@ -47,6 +49,7 @@ class TemplateMutationError(TemplateDomainException):
 class DuplicateTemplateNameException(TemplateDomainException):
     """Выбрасывается, когда пользователь пытается создать шаблон с именем, которое уже занято в текущем инстансе."""
 
+    status_code = 409
     error_code = "TEMPLATE_NAME_ALREADY_EXISTS"
     message = "Таблица с таким именем уже существует в данном пространстве."
 

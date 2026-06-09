@@ -97,6 +97,11 @@ def compile_drop_table_cascade(element, compiler, **kw):
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
 
 
+def _mongo_db_name() -> str:
+    # 🌟 ИСПРАВЛЕНИЕ: Используем правильный атрибут MONGO_DB_NAME вместо MONGO_TEST_NAME
+    return f"{cfg.MONGO_DB_NAME}_{_XDIST_WORKER}"
+
+
 # =============================================================================
 # ПОДКЛЮЧЕНИЯ — scope=session (создаются один раз за прогон)
 # =============================================================================
@@ -126,10 +131,6 @@ async def mongo_client():
 
     yield client
     client.close()
-
-
-def _mongo_db_name() -> str:
-    return f"{cfg.MONGO_TEST_NAME}_{_XDIST_WORKER}"
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

@@ -6,6 +6,7 @@ from triggers.exceptions.action import AutomationDomainException
 class RecordValidationError(AutomationDomainException):
     """Validation error for trigger schema/type contracts exposed to clients as 422."""
 
+    status_code = 422
     error_code = "TRIGGER_RECORD_VALIDATION_ERROR"
     message = "Ошибка валидации триггера."
 

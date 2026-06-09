@@ -14,6 +14,7 @@ class RecordDomainException(BaseAppException):
 class TemplateNotFoundDomainError(RecordDomainException):
     """Выбрасывается, когда запрашиваемый low-code шаблон (структура таблицы) не найден."""
 
+    status_code = 404
     error_code = "TEMPLATE_NOT_FOUND"
     message = "Запрашиваемая структура таблицы (шаблон) не найдена или доступ к ней ограничен."
 
@@ -27,6 +28,7 @@ class TemplateNotFoundDomainError(RecordDomainException):
 class RecordNotFoundDomainError(RecordDomainException):
     """Выбрасывается, когда конкретная строка/запись в динамической таблице не найдена."""
 
+    status_code = 404
     error_code = "RECORD_NOT_FOUND"
     message = "Запись в таблице не найдена или доступ к ней ограничен."
 
@@ -40,6 +42,7 @@ class RecordNotFoundDomainError(RecordDomainException):
 class RecordValidationError(RecordDomainException):
     """Выбрасывается при нарушении целостности данных или схемы при сохранении/обновлении записи."""
 
+    status_code = 422
     error_code = "RECORD_VALIDATION_ERROR"
 
     # Конструктор сам инкапсулирует логику сборки message и details!
@@ -60,3 +63,14 @@ class RecordValidationError(RecordDomainException):
             details["record_uuid"] = record_uuid
 
         super().__init__(message=message, details=details)
+
+
+class RecordFilterParseError(RecordDomainException):
+    """Выбрасывается, когда query-параметр filters не является валидным JSON."""
+
+    status_code = 400
+    error_code = "RECORD_FILTER_PARSE_ERROR"
+    message = "Invalid JSON format in filters parameter"
+
+    def __init__(self, raw_filters: str):
+        super().__init__(message=self.message, details={"filters": raw_filters})

@@ -13,6 +13,7 @@ class AutomationDomainException(BaseAppException):
 class AutomationValidationError(AutomationDomainException):
     """Выбрасывается при ошибках валидации структуры, параметров No-Code экшена или AST графа."""
 
+    status_code = 400
     error_code = "AUTOMATION_VALIDATION_FAILED"
     message = "Ошибка валидации параметров автоматизации."
 
@@ -46,6 +47,7 @@ class AutomationValidationError(AutomationDomainException):
 class TriggerNotFoundDomainError(AutomationDomainException):
     """Выбрасывается, когда запрашиваемый триггер отсутствует в базе данных инстанса."""
 
+    status_code = 404
     error_code = "TRIGGER_NOT_FOUND"
     message = "Запрашиваемый триггер автоматизации не найден."
 
@@ -61,6 +63,7 @@ class TriggerNotFoundDomainError(AutomationDomainException):
 class AutomationExecutionError(AutomationDomainException):
     """Выбрасывается при критических сбоях во время выполнения (например, в рантайме экшена)."""
 
+    status_code = 422
     error_code = "AUTOMATION_EXECUTION_FAILED"
     message = "Критическая ошибка при исполнении экшена автоматизации."
 
@@ -95,6 +98,7 @@ class SystemContractViolation(AutomationDomainException):
     Stage-2 validation should prevent this path; if it happens, it is a server bug.
     """
 
+    status_code = 500
     error_code = "SYSTEM_CONTRACT_VIOLATION"
     message = "Нарушен системный контракт исполнения триггера."
 

@@ -8,6 +8,7 @@ from uuid import UUID
 class CrossTenantAccessDeniedError(PolicyDomainException):
     """Выбрасывается при попытке доступа или изменения данных чужого инстанса (пространства)."""
 
+    status_code = 403
     error_code = "CROSS_TENANT_ACCESS_DENIED"
     message = (
         "У вас нет прав на управление конфигурациями витрины для этого пространства."

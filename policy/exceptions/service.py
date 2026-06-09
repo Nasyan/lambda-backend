@@ -14,6 +14,7 @@ class PolicyDomainException(BaseAppException):
 class PolicyTemplateNotFoundError(PolicyDomainException):
     """Выбрасывается, когда под витрину пытаются настроить несуществующую таблицу CRM."""
 
+    status_code = 400
     error_code = "POLICY_TEMPLATE_NOT_FOUND"
     message = "Невозможно настроить витрину: указанная таблица отсутствует в системе."
 
@@ -27,6 +28,7 @@ class PolicyTemplateNotFoundError(PolicyDomainException):
 class PolicyAlreadyExistsError(PolicyDomainException):
     """Выбрасывается при попытке создать дублирующую политику безопасности для одного шаблона."""
 
+    status_code = 400
     error_code = "POLICY_ALREADY_EXISTS"
     message = "Политика безопасности для данной таблицы уже настроена."
 
@@ -40,6 +42,7 @@ class PolicyAlreadyExistsError(PolicyDomainException):
 class PolicyNotFoundError(PolicyDomainException):
     """Выбрасывается, когда запрашиваемая политика витрины (по ID) отсутствует в базе данных."""
 
+    status_code = 404
     error_code = "POLICY_NOT_FOUND"
     message = "Указанная политика безопасности витрины не найдена."
 

@@ -13,6 +13,7 @@ class InstanceDomainException(BaseAppException):
 class UserInactiveError(InstanceDomainException):
     """Выбрасывается, если учетная запись пользователя заблокирована или неактивна."""
 
+    status_code = 401
     error_code = "USER_ACCOUNT_INACTIVE"
     message = "Учетная запись пользователя неактивна."
 
@@ -23,6 +24,7 @@ class UserInactiveError(InstanceDomainException):
 class CreatorRoleRequiredError(InstanceDomainException):
     """Выбрасывается, когда действие требует роли CREATOR, но у пользователя другая роль."""
 
+    status_code = 403
     error_code = "CREATOR_ROLE_REQUIRED"
     message = "Данное действие доступно только создателям инстансов (CREATOR)."
 
@@ -36,6 +38,7 @@ class CreatorRoleRequiredError(InstanceDomainException):
 class InstanceNotFoundError(InstanceDomainException):
     """Выбрасывается, когда запрашиваемый инстанс (организация/клиент) не найден в системе."""
 
+    status_code = 404
     error_code = "INSTANCE_NOT_FOUND"
     message = "Запрашиваемый рабочий контур (инстанс) не найден."
 
@@ -48,6 +51,7 @@ class InstanceNotFoundError(InstanceDomainException):
 class InstanceDeactivatedError(InstanceDomainException):
     """Выбрасывается, когда инстанс существует, но его обслуживание временно приостановлено."""
 
+    status_code = 403
     error_code = "INSTANCE_DEACTIVATED"
     message = "Обслуживание данного рабочего контура (инстанса) приостановлено."
 
@@ -60,6 +64,7 @@ class InstanceDeactivatedError(InstanceDomainException):
 class InstanceAccessDeniedError(InstanceDomainException):
     """Выбрасывается при попытке получить доступ к чужому инстансу (Нарушение Multi-tenancy)."""
 
+    status_code = 403
     error_code = "INSTANCE_ACCESS_DENIED"
     message = "У вас нет прав на управление этим инстансом."
 

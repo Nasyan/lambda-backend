@@ -13,6 +13,7 @@ class RecordDomainException(BaseAppException):
 class RecordNotFoundError(RecordDomainException):
     """Выбрасывается, когда конкретная строка таблицы (Record) не найдена по UUID."""
 
+    status_code = 404
     error_code = "RECORD_NOT_FOUND"
     message = "Запрашиваемая запись не найдена."
 
@@ -26,6 +27,7 @@ class RecordNotFoundError(RecordDomainException):
 class RecordValidationError(RecordDomainException):
     """Выбрасывается при нарушении схемы данных, типов, ограничений или обязательных полей."""
 
+    status_code = 400
     error_code = "RECORD_VALIDATION_FAILED"
     message = "Ошибка валидации данных записи."
 
@@ -50,5 +52,6 @@ class RecordValidationError(RecordDomainException):
 class DuplicateRecordKeyError(RecordValidationError):
     """Выбрасывается, когда нарушено динамическое бизнес-ограничение unique=True."""
 
+    status_code = 409
     error_code = "DUPLICATE_RECORD_KEY"
     message = "Значение поля должно быть уникальным в рамках текущей таблицы."

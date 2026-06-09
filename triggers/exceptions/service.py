@@ -13,6 +13,7 @@ class AutomationDomainException(BaseAppException):
 class AutomationActionNotFoundError(AutomationDomainException):
     """Выбрасывается, когда триггер ссылается на несуществующий экшен в реестре."""
 
+    status_code = 400
     error_code = "AUTOMATION_ACTION_NOT_FOUND"
     message = "Запрошенный экшен автоматизации не зарегистрирован в системе."
 
@@ -31,6 +32,7 @@ class AutomationActionNotFoundError(AutomationDomainException):
 class AutomationConditionEvaluationError(AutomationDomainException):
     """Выбрасывается, когда парсинг AST-условия или расчет формулы завершился аварийно."""
 
+    status_code = 422
     error_code = "AUTOMATION_CONDITION_EVALUATION_FAILED"
     message = "Ошибка при валидации или расчете AST-условия триггера."
 

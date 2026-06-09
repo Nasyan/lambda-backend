@@ -7,7 +7,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from mongo.record import RecordRepository
 from mongo.template import TemplateRepository
-from mongo.tools.exceptions import TemplateNotFoundError, RecordNotFoundError
+from mongo.exceptions.template import (
+    TemplateNotFoundError as MongoTemplateNotFoundError,
+)
+from mongo.exceptions.record import RecordNotFoundError as MongoRecordNotFoundError
 
 # Импортируем наши новые, чистые и информативные доменные ошибки
 from core.exceptions.record import (
@@ -73,7 +76,7 @@ class RecordService:
                 str_instance,
                 str_template,
             )
-        except TemplateNotFoundError:
+        except MongoTemplateNotFoundError:
             raise TemplateNotFoundDomainError(
                 template_uuid=str_template, instance_uuid=str_instance
             )
@@ -185,7 +188,7 @@ class RecordService:
                 str_instance,
                 str_template,
             )
-        except TemplateNotFoundError:
+        except MongoTemplateNotFoundError:
             raise TemplateNotFoundDomainError(
                 template_uuid=str_template, instance_uuid=str_instance
             )
@@ -196,7 +199,7 @@ class RecordService:
                 str_instance,
                 str_record,
             )
-        except RecordNotFoundError:
+        except MongoRecordNotFoundError:
             raise RecordNotFoundDomainError(
                 record_uuid=str_record, instance_uuid=str_instance
             )
@@ -242,7 +245,7 @@ class RecordService:
                 new_data=computed_data,
                 user_uuid=str(user_uuid),
             )
-        except RecordNotFoundError:
+        except MongoRecordNotFoundError:
             raise RecordNotFoundDomainError(
                 record_uuid=str_record, instance_uuid=str_instance
             )
@@ -274,3 +277,86 @@ class RecordService:
             )
 
         return updated_record
+
+    async def delete_record(
+        self,
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        record_uuid: UUID,
+    ) -> None:
+        str_instance = str(instance_uuid)
+        str_template = str(template_uuid)
+        str_record = str(record_uuid)
+
+        try:
+            await self.template_repo.get_template_by_uuid(str_instance, str_template)
+        except MongoTemplateNotFoundError:
+            raise TemplateNotFoundDomainError(
+                template_uuid=str_template, instance_uuid=str_instance
+            )
+
+        try:
+            await self.record_repo.delete_record(
+                instance_uuid=str_instance,
+                template_uuid=str_template,
+                record_uuid=str_record,
+            )
+        except MongoRecordNotFoundError:
+            raise RecordNotFoundDomainError(
+                record_uuid=str_record, instance_uuid=str_instance
+            )
+
+    async def get_deleted_records_list(
+        self,
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        filters: Dict[str, Any],
+        sort_by: Optional[str],
+        descending: bool,
+        limit: int,
+        offset: int,
+    ) -> Dict[str, Any]:
+        results, total_count = await self.record_repo.get_deleted_records(
+            instance_uuid=str(instance_uuid),
+            template_uuid=str(template_uuid),
+            filters=filters,
+            sort_by=sort_by,
+            sort_descending=descending,
+            limit=limit,
+            offset=offset,
+        )
+
+        return {
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "results": results,
+        }
+
+    async def restore_record(
+        self,
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        record_uuid: UUID,
+    ) -> Dict[str, Any]:
+        str_instance = str(instance_uuid)
+        str_template = str(template_uuid)
+        str_record = str(record_uuid)
+
+        try:
+            await self.template_repo.get_template_by_uuid(str_instance, str_template)
+        except MongoTemplateNotFoundError:
+            raise TemplateNotFoundDomainError(
+                template_uuid=str_template, instance_uuid=str_instance
+            )
+
+        try:
+            return await self.record_repo.restore_record(
+                instance_uuid=str_instance,
+                template_uuid=str_template,
+                record_uuid=str_record,
+            )
+        except MongoRecordNotFoundError:
+            raise RecordNotFoundDomainError(
+                record_uuid=str_record, instance_uuid=str_instance
+            )

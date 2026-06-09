@@ -14,6 +14,7 @@ class CreatorServiceException(BaseAppException):
 class TargetUserNotFoundError(CreatorServiceException):
     """Выбрасывается, если целевой пользователь отсутствует в системе."""
 
+    status_code = 404
     error_code = "TARGET_USER_NOT_FOUND"
     message = "Запрашиваемый пользователь не найден."
 
@@ -26,6 +27,7 @@ class TargetUserNotFoundError(CreatorServiceException):
 class InstanceAccessDeniedError(CreatorServiceException):
     """Выбрасывается при попытке управлять пользователем из чужого инстанса (пространства)."""
 
+    status_code = 403
     error_code = "INSTANCE_ACCESS_DENIED"
     message = "Доступ запрещен. Вы можете управлять пользователями только своего пространства."
 
@@ -46,6 +48,7 @@ class InstanceAccessDeniedError(CreatorServiceException):
 class TargetUserAlreadyExistsError(CreatorServiceException):
     """Выбрасывается при попытке пригласить уже существующего пользователя."""
 
+    status_code = 400
     error_code = "TARGET_USER_ALREADY_EXISTS"
     message = "Пользователь с таким email-адресом уже зарегистрирован в системе."
 
@@ -56,6 +59,7 @@ class TargetUserAlreadyExistsError(CreatorServiceException):
 class UserRoleStateError(CreatorServiceException):
     """Выбрасывается, если пользователь уже находится в целевой роли (уже создатель или уже обычный юзер)."""
 
+    status_code = 400
     error_code = "USER_ROLE_STATE_ERROR"
 
     def __init__(self, target_uuid: UUID, current_role: str, action: str):
@@ -72,6 +76,7 @@ class UserRoleStateError(CreatorServiceException):
 class SelfManagementDeniedError(CreatorServiceException):
     """Выбрасывается при попытке понизить в роли или деактивировать самого себя."""
 
+    status_code = 400
     error_code = "SELF_MANAGEMENT_DENIED"
 
     def __init__(self, creator_uuid: UUID, action: str):
@@ -84,6 +89,7 @@ class SelfManagementDeniedError(CreatorServiceException):
 class CreatorPermissionsUpdateError(CreatorServiceException):
     """Выбрасывается при попытке точечно обновить права аккаунту с ролью CREATOR."""
 
+    status_code = 400
     error_code = "CREATOR_PERMISSIONS_UPDATE_DENIED"
     message = "Невозможно изменить точечные права для аккаунта Создателя. Создатели автоматически обладают полным доступом."
 
@@ -96,6 +102,7 @@ class CreatorPermissionsUpdateError(CreatorServiceException):
 class CreatorDeactivationDeniedError(CreatorServiceException):
     """Выбрасывается при попытке деактивировать активного Создателя без предварительного понижения роли."""
 
+    status_code = 400
     error_code = "CREATOR_DEACTIVATION_DENIED"
     message = "Невозможно деактивировать аккаунт Создателя. Сначала необходимо понизить его роль до обычного пользователя."
 
@@ -108,6 +115,7 @@ class CreatorDeactivationDeniedError(CreatorServiceException):
 class TargetUserAlreadyInactiveError(CreatorServiceException):
     """Выбрасывается, если пользователь уже деактивирован."""
 
+    status_code = 400
     error_code = "TARGET_USER_ALREADY_INACTIVE"
     message = "Этот пользователь уже деактивирован."
 
@@ -121,6 +129,7 @@ class TargetUserAlreadyInactiveError(CreatorServiceException):
 class InfrastructureStorageError(CreatorServiceException):
     """Выбрасывается при падении транзакций БД или сбоях связи с кэшем Redis."""
 
+    status_code = 500
     error_code = "INFRASTRUCTURE_STORAGE_ERROR"
     message = "Внутренний сбой при сохранении данных в хранилище платформы."
 
@@ -132,8 +141,12 @@ class InfrastructureStorageError(CreatorServiceException):
 
 
 class CreatorRoleRequiredError(CreatorServiceException):
-    pass
+    status_code = 403
+    error_code = "CREATOR_ROLE_REQUIRED"
+    message = "Данное действие доступно только создателям инстансов (CREATOR)."
 
 
 class InstanceNotFoundError(CreatorServiceException):
-    pass
+    status_code = 404
+    error_code = "INSTANCE_NOT_FOUND"
+    message = "Запрашиваемый рабочий контур (инстанс) не найден."

@@ -6,7 +6,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import InsertOne, UpdateOne
 from pymongo.errors import BulkWriteError
 
-from mongo.tools.utils import stringify_id
+from mongo.tools.utils import stringify_id, with_active_filter
+from logs.mongo import log_mongo_query, start_mongo_timer
 
 
 class TargetAtomicWriter:
@@ -42,6 +43,7 @@ class TargetAtomicWriter:
             "template_uuid": self.target_template_uuid,
             "data": self._strip_system_fields(data),
             "version": 1,
+            "is_deleted": False,
             "created_by": str(user_uuid),
             "created_at": now,
             "updated_at": now,
@@ -70,6 +72,7 @@ class TargetAtomicWriter:
             op_target = ("filter", dict(filter_doc))
         else:
             raise ValueError("record_uuid or search_filter is required for update")
+        filter_doc = with_active_filter(filter_doc)
 
         update_doc = self._translate_operations(operations)
         if upsert:
@@ -79,6 +82,7 @@ class TargetAtomicWriter:
                     "_id": upsert_record_uuid,
                     "instance_uuid": self.instance_uuid,
                     "template_uuid": self.target_template_uuid,
+                    "is_deleted": False,
                     "created_by": "system_automation",
                     "created_at": datetime.now(timezone.utc),
                 }
@@ -110,6 +114,11 @@ class TargetAtomicWriter:
         failed_indexes: Set[int] = set()
         write_errors: List[Dict[str, Any]] = []
 
+        start_time = start_mongo_timer()
+        bulk_query = {
+            "operation_count": len(self._operations),
+            "operation_types": [type(item).__name__ for item in self._operations],
+        }
         try:
             result = await self.collection.bulk_write(self._operations, ordered=False)
             counts = {
@@ -141,6 +150,17 @@ class TargetAtomicWriter:
                 "upserted_count": details.get("nUpserted", 0),
                 "inserted_count": details.get("nInserted", 0),
             }
+
+        log_mongo_query(
+            self.collection,
+            "bulk_write",
+            bulk_query,
+            start_time,
+            counts["modified_count"]
+            + counts["upserted_count"]
+            + counts["inserted_count"],
+            extra={"failed_count": len(failed_indexes)},
+        )
 
         # Только реально записанные операции попадают в touched-наборы.
         for index, op_target in enumerate(self._op_targets):
@@ -196,12 +216,21 @@ class TargetAtomicWriter:
             if len(branches) == 1
             else {**base_query, "$or": branches}
         )
+        query = with_active_filter(query)
 
         pre_images: Dict[str, Dict[str, Any]] = {}
+        start_time = start_mongo_timer()
         cursor = self.collection.find(query)
         async for record in cursor:
             stringify_id(record)
             pre_images[str(record["_id"])] = record
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(pre_images),
+        )
         return pre_images
 
     async def fetch_touched_records(self) -> List[Dict[str, Any]]:
@@ -221,10 +250,20 @@ class TargetAtomicWriter:
             if len(branches) == 1
             else {**base_query, "$or": branches}
         )
+        query = with_active_filter(query)
         # Без искусственного потолка: батч мог затронуть тысячи записей,
         # каскад обязан увидеть их все (ГЗ-2; ранее стоял cap branches*100).
+        start_time = start_mongo_timer()
         cursor = self.collection.find(query)
-        return [stringify_id(record) async for record in cursor]
+        records = [stringify_id(record) async for record in cursor]
+        log_mongo_query(
+            self.collection,
+            "find",
+            query,
+            start_time,
+            len(records),
+        )
+        return records
 
     def _translate_operations(self, operations: Any) -> Dict[str, Dict[str, Any]]:
         update_doc: Dict[str, Dict[str, Any]] = {}
@@ -288,6 +327,7 @@ class TargetAtomicWriter:
                 "updated_at",
                 "created_by",
                 "updated_by",
+                "is_deleted",
             }
         }
 

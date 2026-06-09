@@ -55,6 +55,7 @@ class TemplateResponse(BaseModel):
     created_by: str
     updated_by: Optional[str] = None
     version: int = 1
+    is_deleted: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

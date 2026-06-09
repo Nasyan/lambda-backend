@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 from users.models import AppTools
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
 from pydantic_core import PydanticCustomError
 import re
 
@@ -178,6 +178,8 @@ class ClientRegisterRequest(BaseModel):
         examples=["4a3b2c1d-e5f6-7a8b-9c0d-1e2f3a4b5c6d"],
     )
 
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     @field_validator("password")
     @classmethod
     def validate_password_strength(cls, value: str) -> str:
@@ -188,8 +190,6 @@ class ClientRegisterRequest(BaseModel):
                 "Password must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, and one number.",
             )
         return value
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 class ClientProfileResponse(BaseModel):

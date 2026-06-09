@@ -20,7 +20,7 @@ async def init_redis():
     for name, db in dbs.items():
         redis_clients[name] = redis.Redis(
             host=config.REDIS_HOST,
-            port=config.REDIS_PORT,  # Теперь подмена порта в контесте сработает!
+            port=config.REDIS_PORT,
             db=db,
             encoding="utf-8",
             decode_responses=True,

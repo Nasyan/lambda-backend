@@ -41,7 +41,7 @@ class TemplateResponse(BaseModel):
     recipients_config: Dict[str, Any]
     created_at: datetime
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True)
 
 
 class InboxItemResponse(BaseModel):
@@ -51,4 +51,4 @@ class InboxItemResponse(BaseModel):
     title: str
     body: str
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True)

@@ -13,6 +13,7 @@ class StorageDomainException(BaseAppException):
 class StorageInfrastructureError(StorageDomainException):
     """Выбрасывается, когда S3-клиент не может связаться с MinIO (сеть, неверные креды, бакет не существует)."""
 
+    status_code = 500
     error_code = "STORAGE_INFRASTRUCTURE_UNAVAILABLE"
     message = "Ошибка взаимодействия с удаленным файловым хранилищем."
 
@@ -24,6 +25,7 @@ class StorageInfrastructureError(StorageDomainException):
 class StorageFileNotFoundError(StorageDomainException):
     """Выбрасывается, когда запрашиваемый по file_path объект отсутствует в бакете."""
 
+    status_code = 404
     error_code = "STORAGE_FILE_NOT_FOUND"
     message = "Указанный файл не найден в хранилище данных."
 
@@ -38,5 +40,6 @@ class StorageFileNotFoundError(StorageDomainException):
 class StorageURLGenerationError(StorageDomainException):
     """Выбрасывается, если произошел сбой генерации пресайнед ссылки."""
 
+    status_code = 400
     error_code = "STORAGE_URL_GENERATION_FAILED"
     message = "Не удалось сгенерировать безопасную ссылку для файла."
