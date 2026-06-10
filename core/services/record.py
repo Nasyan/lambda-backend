@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from mongo.history import HistoryRepository
 from mongo.record import RecordRepository
 from mongo.template import TemplateRepository
 from mongo.exceptions.template import (
@@ -60,6 +61,28 @@ class RecordService:
         self.resolver_factory = RecordResolverFactory(record_repo)
         self.data_validator = RecordDataValidator(record_repo)
         self.unique_checker = RecordUniqueConstraintChecker(record_repo)
+        self.history_repo = HistoryRepository(mongo_db)
+
+    async def _log_record_history(self, record: Dict[str, Any], user_uuid: str) -> None:
+        """Append-only снимок состояния записи на её текущей версии (задание 3).
+
+        Сбой записи истории не должен терять уже сохранённую запись —
+        фиксируем ошибку в логе и продолжаем.
+        """
+        try:
+            await self.history_repo.log_change(
+                instance_uuid=str(record["instance_uuid"]),
+                record_uuid=str(record["_id"]),
+                user_uuid=str(user_uuid),
+                version=int(record.get("version", 1)),
+                snapshot=record,
+            )
+        except Exception:
+            logger.error(
+                "Не удалось записать историю для записи %s",
+                record.get("_id"),
+                exc_info=True,
+            )
 
     async def create_new_record(
         self,
@@ -117,6 +140,8 @@ class RecordService:
             raise RecordValidationError(
                 action="создании", error=e, template_uuid=str_template
             )
+
+        await self._log_record_history(inserted_record, str(user_uuid))
 
         try:
             await AutomationService.execute_automation_triggers(
@@ -350,6 +375,8 @@ class RecordService:
                 record_uuid=str_record,
             )
 
+        await self._log_record_history(updated_record, str(user_uuid))
+
         # 🚀 ПЕРЕХВАТЧИК АВТОМАТИЗАЦИЙ
         try:
             await AutomationService.execute_automation_triggers(
@@ -376,6 +403,7 @@ class RecordService:
         instance_uuid: UUID,
         template_uuid: UUID,
         record_uuid: UUID,
+        user_uuid: Optional[UUID] = None,
     ) -> None:
         str_instance = str(instance_uuid)
         str_template = str(template_uuid)
@@ -389,15 +417,21 @@ class RecordService:
             )
 
         try:
-            await self.record_repo.delete_record(
+            deleted_record = await self.record_repo.delete_record(
                 instance_uuid=str_instance,
                 template_uuid=str_template,
                 record_uuid=str_record,
+                user_uuid=str(user_uuid) if user_uuid else None,
             )
         except MongoRecordNotFoundError:
             raise RecordNotFoundDomainError(
                 record_uuid=str_record, instance_uuid=str_instance
             )
+
+        # Снимок факта удаления (версия инкрементирована репозиторием).
+        await self._log_record_history(
+            deleted_record, str(user_uuid) if user_uuid else "system"
+        )
 
     async def get_deleted_records_list(
         self,
@@ -431,6 +465,7 @@ class RecordService:
         instance_uuid: UUID,
         template_uuid: UUID,
         record_uuid: UUID,
+        user_uuid: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         str_instance = str(instance_uuid)
         str_template = str(template_uuid)
@@ -444,12 +479,19 @@ class RecordService:
             )
 
         try:
-            return await self.record_repo.restore_record(
+            restored_record = await self.record_repo.restore_record(
                 instance_uuid=str_instance,
                 template_uuid=str_template,
                 record_uuid=str_record,
+                user_uuid=str(user_uuid) if user_uuid else None,
             )
         except MongoRecordNotFoundError:
             raise RecordNotFoundDomainError(
                 record_uuid=str_record, instance_uuid=str_instance
             )
+
+        # Снимок факта восстановления (версия инкрементирована репозиторием).
+        await self._log_record_history(
+            restored_record, str(user_uuid) if user_uuid else "system"
+        )
+        return restored_record

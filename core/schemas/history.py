@@ -8,7 +8,8 @@ from typing import Any, List, Optional, Dict
 
 class FieldHistoryItem(BaseModel):
     version: int
-    user_uuid: UUID
+    # str, не UUID: системные акторы ("system_automation") — валидные авторы
+    user_uuid: str
     updated_at: Optional[datetime] = None
     field_name: str
     value: Any
@@ -23,7 +24,8 @@ class FieldHistoryResponse(BaseModel):
 
 class FullHistoryItem(BaseModel):
     version: int
-    user_uuid: UUID
+    # str, не UUID: системные акторы ("system_automation") — валидные авторы
+    user_uuid: str
     updated_at: Optional[datetime] = None
     snapshot: Dict[str, Any]
 

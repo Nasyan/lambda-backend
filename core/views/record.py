@@ -232,6 +232,7 @@ def create_records_router(tool: AppTools) -> APIRouter:
             instance_uuid=instance_uuid,
             template_uuid=template_uuid,
             record_uuid=record_uuid,
+            user_uuid=current_user.uuid,
         )
 
     @router.post("/{record_uuid}/restore", response_model=RecordResponse)
@@ -246,6 +247,7 @@ def create_records_router(tool: AppTools) -> APIRouter:
             instance_uuid=instance_uuid,
             template_uuid=template_uuid,
             record_uuid=record_uuid,
+            user_uuid=current_user.uuid,
         )
 
     return router

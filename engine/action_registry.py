@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -6,10 +7,13 @@ from engine.atomic_writer import TargetAtomicWriter
 from engine.evaluator import ASTEvaluator, EvaluationScope
 from engine.iteration_engine import IterationLoopEngine
 from engine.ast import parse_ast
+from mongo.tools.builders import build_history_document
 from triggers.action_contracts import get_action_signature
 from triggers.actions import ACTION_MAPPING
 from triggers.exceptions.action import AutomationExecutionError, SystemContractViolation
 from triggers.models import EventType, PayloadReturnType, Trigger
+
+logger = logging.getLogger(__name__)
 
 CascadeCallback = Callable[
     # (event_type, template_uuid, document, depth, previous_document)
@@ -129,6 +133,7 @@ class ActionDispatcher:
 
         flush_result = await writer.flush()
         touched_records = await writer.fetch_touched_records()
+        await cls._log_history_for_touched(mongo_db, touched_records)
 
         if cascade_callback:
             cascade_event = (
@@ -151,6 +156,39 @@ class ActionDispatcher:
             "write_result": flush_result,
             "touched_records_count": len(touched_records),
         }
+
+    @classmethod
+    async def _log_history_for_touched(
+        cls,
+        mongo_db: AsyncIOMotorDatabase,
+        touched_records: List[Dict[str, Any]],
+    ) -> None:
+        """Append-only история для записей, изменённых автоматизацией (задание 3).
+
+        Версию уже инкрементировал TargetAtomicWriter — здесь только снимки.
+        Сбой записи истории не должен ронять DML-пайплайн: данные уже записаны,
+        фиксируем ошибку в логе.
+        """
+        if not touched_records:
+            return
+        history_docs = [
+            build_history_document(
+                instance_uuid=str(record["instance_uuid"]),
+                record_uuid=str(record["_id"]),
+                user_uuid="system_automation",
+                version=int(record.get("version", 1)),
+                snapshot=record,
+            )
+            for record in touched_records
+        ]
+        try:
+            await mongo_db["records_history"].insert_many(history_docs, ordered=False)
+        except Exception:
+            logger.error(
+                "Не удалось записать историю для %d записей автоматизации",
+                len(history_docs),
+                exc_info=True,
+            )
 
     @classmethod
     async def _evaluate_mapping(

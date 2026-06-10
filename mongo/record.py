@@ -1,5 +1,6 @@
 # mongo/record.py
 
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
@@ -332,22 +333,37 @@ class RecordRepository:
         instance_uuid: str,
         record_uuid: str,
         template_uuid: Optional[str] = None,
-    ) -> None:
+        user_uuid: Optional[str] = None,
+    ) -> Dict[str, Any]:
 
         query = with_active_filter(build_record_query(instance_uuid, record_uuid))
         if template_uuid is not None:
             query["template_uuid"] = str(template_uuid)
-        update = {"$set": {"is_deleted": True}}
-        result = await execute_logged_mongo_call(
+        # Удаление — тоже изменение: версия инкрементируется, updated_* ставятся
+        # (задание 3 — консистентный аудит-трейл).
+        update: Dict[str, Any] = {
+            "$set": {
+                "is_deleted": True,
+                "updated_at": datetime.now(timezone.utc),
+            },
+            "$inc": {"version": 1},
+        }
+        if user_uuid:
+            update["$set"]["updated_by"] = str(user_uuid)
+        deleted_record = await execute_logged_mongo_call(
             self.collection,
-            "update_one",
+            "find_one_and_update",
             query,
-            lambda: self.collection.update_one(query, update),
-            lambda item: item.modified_count,
+            lambda: self.collection.find_one_and_update(
+                query,
+                update,
+                return_document=ReturnDocument.AFTER,
+            ),
+            lambda result: 1 if result else 0,
             update=update,
         )
 
-        if result.matched_count == 0:
+        if not deleted_record:
             raise RecordNotFoundError(
                 record_uuid=record_uuid,
                 instance_uuid=instance_uuid,
@@ -367,6 +383,8 @@ class RecordRepository:
             lambda item: item.modified_count,
             update=history_update,
         )
+
+        return stringify_id(deleted_record)
 
     async def get_records_by_uuids(
         self,
@@ -477,12 +495,22 @@ class RecordRepository:
         instance_uuid: str,
         record_uuid: str,
         template_uuid: Optional[str] = None,
+        user_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
         query = with_deleted_filter(build_record_query(instance_uuid, record_uuid))
         if template_uuid is not None:
             query["template_uuid"] = str(template_uuid)
 
-        update = {"$set": {"is_deleted": False}}
+        # Восстановление — изменение: версия и updated_* двигаются (задание 3).
+        update: Dict[str, Any] = {
+            "$set": {
+                "is_deleted": False,
+                "updated_at": datetime.now(timezone.utc),
+            },
+            "$inc": {"version": 1},
+        }
+        if user_uuid:
+            update["$set"]["updated_by"] = str(user_uuid)
         restored_record = await execute_logged_mongo_call(
             self.collection,
             "find_one_and_update",

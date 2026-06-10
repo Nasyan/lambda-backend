@@ -77,15 +77,18 @@ def extract_field_history(
 
     for record in history_records:
         snapshot = record.get("snapshot", {})
+        # Снимки полного документа держат поля в snapshot["data"] (задание 3);
+        # плоский snapshot — legacy-формат, поддерживаем оба.
+        field_source = snapshot.get("data") if isinstance(snapshot.get("data"), dict) else snapshot
 
-        if field_name in snapshot:
+        if field_name in field_source:
             field_history.append(
                 {
                     "version": record.get("version"),
                     "user_uuid": record.get("user_uuid"),
                     "updated_at": record.get("updated_at") or record.get("created_at"),
                     "field_name": field_name,
-                    "value": snapshot[field_name],
+                    "value": field_source[field_name],
                 }
             )
 

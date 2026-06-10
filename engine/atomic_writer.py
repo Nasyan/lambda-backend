@@ -96,6 +96,8 @@ class TargetAtomicWriter:
                 op_target = ("id", upsert_record_uuid)
 
         update_doc.setdefault("$set", {})["updated_at"] = datetime.now(timezone.utc)
+        # Автоматизация — тоже актор: фиксируем авторство изменений (задание 3).
+        update_doc["$set"].setdefault("updated_by", "system_automation")
         update_doc.setdefault("$inc", {})["version"] = 1
         self._operations.append(UpdateOne(filter_doc, update_doc, upsert=upsert))
         self._op_targets.append(op_target)

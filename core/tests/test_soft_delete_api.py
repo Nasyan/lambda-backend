@@ -1,9 +1,5 @@
 import pytest
 
-from main import app
-from mongo.db import get_mongo_db
-from mongo.history import HistoryRepository
-
 
 @pytest.mark.asyncio
 async def test_template_soft_delete_restore_api_cascades_records_and_history(
@@ -31,16 +27,8 @@ async def test_template_soft_delete_restore_api_cascades_records_and_history(
     assert create_record_resp.status_code == 201
     record_uuid = create_record_resp.json()["_id"]
 
-    mongo_db = await anext(app.dependency_overrides[get_mongo_db]())
-    history_repo = HistoryRepository(mongo_db)
-    await history_repo.log_change(
-        instance_uuid=instance_uuid,
-        record_uuid=record_uuid,
-        user_uuid=user_uuid,
-        version=1,
-        snapshot={"title": "record restored with template"},
-    )
-
+    # История v1 пишется продакшн-кодом при создании записи (задание 3) —
+    # ручная вставка снапшота больше не нужна.
     delete_resp = await test_client.delete(
         f"/instances/{instance_uuid}/templates/{template_uuid}",
         headers=headers,
@@ -102,7 +90,14 @@ async def test_template_soft_delete_restore_api_cascades_records_and_history(
         headers=headers,
     )
     assert history_restored_resp.status_code == 200
-    assert len(history_restored_resp.json()["history"]) == 1
+    restored_history = history_restored_resp.json()["history"]
+    assert len(restored_history) == 1
+    assert restored_history[0]["version"] == 1
+    assert restored_history[0]["user_uuid"] == str(user_uuid)
+    assert (
+        restored_history[0]["snapshot"]["data"]["title"]
+        == "record restored with template"
+    )
 
 
 @pytest.mark.asyncio
