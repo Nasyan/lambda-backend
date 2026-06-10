@@ -118,7 +118,8 @@ class TestTriggersAndAggregations:
         trigger_payload = {
             "name": "Подсказка: Кол-во заказов по телефону",
             "trigger_type": "LIVE_EVAL",
-            "ast": live_ast,
+            "payload_ast": live_ast,
+            "source_template_uuid": order_tpl_id,
             "target_template_uuid": order_tpl_id,
         }
         trigger_resp = await test_client.post(
@@ -126,7 +127,7 @@ class TestTriggersAndAggregations:
             headers=headers,
             json=trigger_payload,
         )
-        assert trigger_resp.status_code == 201
+        assert trigger_resp.status_code == 201, trigger_resp.text
         trigger_id = trigger_resp.json()["id"]
 
         # 4. Вызываем на лету расчет триггера с передачей контекста ввода фронтенда
@@ -250,24 +251,26 @@ class TestTriggersAndAggregations:
         trigger_payload = {
             "name": "Notify on Status Change",
             "trigger_type": "AUTOMATION",
+            "source_template_uuid": template_uuid,
             "target_template_uuid": template_uuid,
             "target_field": "order_status",
             "event_type": "ON_RECORD_UPDATE",
-            "action_name": "SEND_WEBHOOK",
-            "action_params": {"url": "https://example.com/hook"},
-            "ast": {
+            "action_name": "test_action",
+            "action_params": {"required_text": "Статус оплачен"},
+            "condition_ast": {
                 "type": "binary_op",
                 "operator": "eq",
                 "left": {"type": "field", "value": "order_status"},
                 "right": {"type": "literal", "value": "paid"},
             },
+            "payload_ast": {"type": "field", "value": "order_status"},
         }
         trigger_resp = await test_client.post(
             f"/instances/{instance_uuid}/triggers/",
             headers=headers,
             json=trigger_payload,
         )
-        assert trigger_resp.status_code == 201
+        assert trigger_resp.status_code == 201, trigger_resp.text
         trigger_id = trigger_resp.json()["id"]
 
         # 3. Запрашиваем измененный шаблон и проверяем мутацию метаданных схемы поля

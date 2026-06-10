@@ -69,7 +69,12 @@ class MongoPipelineBuilder:
 
     @trace_action(name="Analytics::Compile_Chart")
     def compile_chart(
-        self, config: ChartConfigPayload, ast_filter: Optional[Dict[str, Any]] = None
+        self,
+        config: ChartConfigPayload,
+        ast_filter: Optional[Dict[str, Any]] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        date_field: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         pipeline = []
 
@@ -80,6 +85,31 @@ class MongoPipelineBuilder:
             "is_deleted": {"$ne": True},
         }
         pipeline.append({"$match": base_match})
+
+        # 1.5 Диапазон дат «с какого по какое» (задание 2026-06-10).
+        # Даты в data хранятся ISO-строками, поэтому границы сравниваются
+        # лексикографически — это корректно для ISO-8601 ($gte/$lte включительно).
+        # Поле диапазона: явный date_field, иначе datetime-ось X. Для
+        # категориальных осей (pie и т.п.) date_field обязателен.
+        if date_from or date_to:
+            range_field = date_field or (
+                config.axis_x.field if config.axis_x.type == "datetime" else None
+            )
+            if not range_field:
+                raise InvalidAggregationConfigError(
+                    message=(
+                        "Для date_from/date_to нужна datetime-ось X "
+                        "или явный параметр date_field."
+                    ),
+                    details={"axis_x_type": config.axis_x.type},
+                )
+            range_expr: Dict[str, Any] = {}
+            if date_from:
+                range_expr["$gte"] = date_from
+            if date_to:
+                range_expr["$lte"] = date_to
+            date_field_path = self._resolve_field_path(range_field).lstrip("$")
+            pipeline.append({"$match": {date_field_path: range_expr}})
 
         # 2. Компиляция глобального AST-фильтра
         if ast_filter:
@@ -116,21 +146,28 @@ class MongoPipelineBuilder:
 
         if config.axis_x.type == "datetime" and config.axis_x.date_bucket:
             bucket_formats = {
+                "hour": "%Y-%m-%d %H:00",  # таймлайн по часам
+                "hour_of_day": "%H",  # «в какое время суток покупают» (00-23)
                 "day": "%Y-%m-%d",
+                "weekday": "%u",  # ISO-день недели: 1=Пн … 7=Вс
                 "week": "%Y-%U",
                 "month": "%Y-%m",
                 "year": "%Y",
             }
             fmt = bucket_formats.get(config.axis_x.date_bucket, "%Y-%m-%d")
+            # Даты в data приходят ISO-строками; $convert принимает и строку,
+            # и BSON-дату — невалидное значение уходит в onNull → "N/A".
             group_id_expr = {
                 "$dateToString": {
                     "format": fmt,
-                    "date": (
-                        {"$dateFromString": {"dateString": x_field}}
-                        if config.axis_x.type == "categorical"
-                        else x_field
-                    ),
-                    "onError": x_field,
+                    "date": {
+                        "$convert": {
+                            "input": x_field,
+                            "to": "date",
+                            "onError": None,
+                            "onNull": None,
+                        }
+                    },
                     "onNull": "N/A",
                 }
             }

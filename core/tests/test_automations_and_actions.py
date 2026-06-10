@@ -35,22 +35,30 @@ class TestAutomationsAndActions:
             notes_url, headers=headers, json={"data": {"amount": 50}}
         )
 
-        # 3. Конфигурируем триггер AUTOMATION (MANUAL вызов) с условием amount > 100
+        # 3. Конфигурируем триггер AUTOMATION (MANUAL вызов): payload_ast = query
+        #    по записям шаблона с фильтром amount > 100 (формат v2: condition_ast/
+        #    payload_ast вместо устаревшего ast, source_template_uuid обязателен)
         trigger_payload = {
             "name": "Рассылка для крупных сделок",
             "trigger_type": "AUTOMATION",
             "event_type": "MANUAL",
+            "source_template_uuid": tpl_id,
             "target_template_uuid": tpl_id,
+            "payload_ast": {
+                "type": "query",
+                "target_template_uuid": tpl_id,
+                "filters": [
+                    {
+                        "field": "amount",
+                        "operator": "gt",
+                        "value": {"type": "literal", "value": 100},
+                    }
+                ],
+            },
             "action_name": "test_action",
             "action_params": {
                 "required_text": "Привет, крупный клиент!",
                 "send_attempts": 3,
-            },
-            "ast": {
-                "type": "binary_op",
-                "operator": "gt",
-                "left": {"type": "field", "value": "amount"},
-                "right": {"type": "literal", "value": 100},
             },
         }
         trigger_res = await test_client.post(
@@ -58,6 +66,7 @@ class TestAutomationsAndActions:
             headers=headers,
             json=trigger_payload,
         )
+        assert trigger_res.status_code == 201, trigger_res.text
         trigger_id = trigger_res.json().get("id") or trigger_res.json().get("_id")
 
         # 4. Запускаем обработку автоматизации и сверяем количество затронутых документов
@@ -68,12 +77,11 @@ class TestAutomationsAndActions:
 
         exec_data = exec_res.json()
         assert exec_data["status"] == "success"
-        assert exec_data["matched_records_count"] == 1
-        assert exec_data["execution_details"]["executed_records"] == 1
-        assert "Привет, крупный клиент!" in exec_data["execution_details"]["logs"][0]
-
-    import uuid
-    import pytest
+        details = exec_data["execution_details"]
+        assert details["status"] == "success"
+        action_result = details["result"]
+        assert action_result["executed_records"] == 1
+        assert "Привет, крупный клиент!" in action_result["logs"][0]
 
     @pytest.mark.asyncio
     async def test_automation_validation_failures(
@@ -91,7 +99,8 @@ class TestAutomationsAndActions:
         bad_payload_1 = {
             "name": "Сломанный триггер 1",
             "trigger_type": "AUTOMATION",
-            "ast": dummy_ast,
+            "payload_ast": dummy_ast,
+            "source_template_uuid": target_template,
             "target_template_uuid": target_template,
         }
         resp_1 = await test_client.post(url, json=bad_payload_1, headers=headers)
@@ -103,7 +112,8 @@ class TestAutomationsAndActions:
             "trigger_type": "AUTOMATION",
             "event_type": "CRON",
             "action_name": "test_action",
-            "ast": dummy_ast,
+            "payload_ast": dummy_ast,
+            "source_template_uuid": target_template,
             "target_template_uuid": target_template,
         }
         resp_2 = await test_client.post(url, json=bad_payload_2, headers=headers)
@@ -135,24 +145,31 @@ class TestAutomationsAndActions:
             json={"data": {"amount": 50}},
         )
 
-        # 2. Регистрируем триггер с заведомо недостижимым условием выполнения (amount > 1000)
+        # 2. Регистрируем триггер с заведомо недостижимым фильтром выборки (amount > 1000)
         trigger_payload = {
             "name": "Недостижимый триггер",
             "trigger_type": "AUTOMATION",
             "event_type": "MANUAL",
+            "source_template_uuid": tpl_id,
             "target_template_uuid": tpl_id,
+            "payload_ast": {
+                "type": "query",
+                "target_template_uuid": tpl_id,
+                "filters": [
+                    {
+                        "field": "amount",
+                        "operator": "gt",
+                        "value": {"type": "literal", "value": 1000},
+                    }
+                ],
+            },
             "action_name": "test_action",
             "action_params": {"required_text": "Тест"},
-            "ast": {
-                "type": "binary_op",
-                "operator": "gt",
-                "left": {"type": "field", "value": "amount"},
-                "right": {"type": "literal", "value": 1000},
-            },
         }
         trigger_res = await test_client.post(
             f"{base_url}/triggers/", headers=headers, json=trigger_payload
         )
+        assert trigger_res.status_code == 201, trigger_res.text
         trigger_id = trigger_res.json().get("id") or trigger_res.json().get("_id")
 
         # 3. Выполняем и сверяем пустые счетчики при успешном статусе ответа
@@ -163,5 +180,6 @@ class TestAutomationsAndActions:
 
         exec_data = exec_res.json()
         assert exec_data["status"] == "success"
-        assert exec_data["matched_records_count"] == 0
-        assert exec_data["execution_details"]["executed_records"] == 0
+        action_result = exec_data["execution_details"]["result"]
+        assert action_result["executed_records"] == 0
+        assert action_result["logs"] == []

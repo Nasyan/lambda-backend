@@ -1,10 +1,12 @@
 # analytics/views.py
 
 from uuid import UUID
-from typing import List
-from fastapi import APIRouter, Depends, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from csvloader import CSVLoader
 
 from database.db import get_db
 from mongo.db import get_mongo_db
@@ -45,6 +47,18 @@ async def create_widget(
 async def get_widget_data(
     instance_uuid: UUID,
     widget_uuid: UUID,
+    date_from: Optional[str] = Query(
+        None, description="Начало диапазона (ISO-8601, включительно), например 2026-06-01"
+    ),
+    date_to: Optional[str] = Query(
+        None, description="Конец диапазона (ISO-8601, включительно), например 2026-06-30"
+    ),
+    date_field: Optional[str] = Query(
+        None,
+        description=(
+            "Поле data для диапазона дат; по умолчанию — datetime-ось X виджета"
+        ),
+    ),
     instance: Instances = Depends(get_current_instance_creator),
     current_user: Users = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -55,6 +69,7 @@ async def get_widget_data(
     """
     Главный эндпоинт аналитики.
     Агрегирует данные в MongoDB на лету с полной поддержкой AST-формул и кросс-таблиц.
+    Опционально режет данные по диапазону дат поля оси X (date_from/date_to).
     Возвращает легкий массив вида [{"label": "2026-05", "value": 15000}, ...]
     """
     # 🔥 Нам нужно передавать instance_uuid в сервис для сквозной проверки
@@ -64,6 +79,51 @@ async def get_widget_data(
         instance_uuid=instance.uuid,  # Передаем изолированный ID инстанса
         db=db,
         mongo_db=mongo_db,
+        date_from=date_from,
+        date_to=date_to,
+        date_field=date_field,
+    )
+
+
+@router.get("/{widget_uuid}/export-csv")
+async def export_widget_data_csv(
+    instance_uuid: UUID,
+    widget_uuid: UUID,
+    date_from: Optional[str] = Query(
+        None, description="Начало диапазона (ISO-8601, включительно)"
+    ),
+    date_to: Optional[str] = Query(
+        None, description="Конец диапазона (ISO-8601, включительно)"
+    ),
+    date_field: Optional[str] = Query(
+        None,
+        description=(
+            "Поле data для диапазона дат; по умолчанию — datetime-ось X виджета"
+        ),
+    ),
+    instance: Instances = Depends(get_current_instance_creator),
+    current_user: Users = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+):
+    """Выгрузка точек графика виджета в CSV (label/value) с опциональным
+    диапазоном дат — те же данные, что и /data, но файлом."""
+    data = await WidgetService.get_widget_data(
+        widget_uuid=widget_uuid,
+        instance_uuid=instance.uuid,
+        db=db,
+        mongo_db=mongo_db,
+        date_from=date_from,
+        date_to=date_to,
+        date_field=date_field,
+    )
+    csv_content = CSVLoader().analytics_to_csv(data)
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="widget-{widget_uuid}.csv"'
+        },
     )
 
 

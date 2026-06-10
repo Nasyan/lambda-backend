@@ -1,7 +1,7 @@
 # analytics/widget.py
 
 from uuid import UUID
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analytics.models import AnalyticsWidget
@@ -45,7 +45,14 @@ class WidgetService:
 
     @classmethod
     async def get_widget_data(
-        cls, widget_uuid: UUID, instance_uuid: UUID, db: AsyncSession, mongo_db: Any
+        cls,
+        widget_uuid: UUID,
+        instance_uuid: UUID,
+        db: AsyncSession,
+        mongo_db: Any,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        date_field: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         # 1. Достаем метаданные графика из Postgres
         widget = await AnalyticsWidgetRepository(db).get(instance_uuid, widget_uuid)
@@ -54,8 +61,6 @@ class WidgetService:
 
         # 2. Инициализируем аналитический слой MongoDB
         analytics_repo = AnalyticsRepository(mongo_db)
-
-        chart_config_model = ChartConfigPayload(**widget.chart_config)
 
         schema_definition = await analytics_repo.get_schema_definition(
             str(widget.target_template_uuid)
@@ -68,6 +73,9 @@ class WidgetService:
             config=chart_config_model,
             schema_definition=schema_definition,  # 🔥 Передаем схему сюда
             ast_filter=widget.ast_filter,
+            date_from=date_from,
+            date_to=date_to,
+            date_field=date_field,
         )
 
         return data

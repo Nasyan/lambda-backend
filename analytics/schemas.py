@@ -14,7 +14,11 @@ class AxisXConfig(BaseModel):
     field: str = Field(..., description="Имя системной колонки шаблона")
     type: str = Field(..., description="categorical, datetime или numerical")
     date_bucket: Optional[str] = Field(
-        None, description="day, week, month, year (только если type=datetime)"
+        None,
+        description=(
+            "hour, hour_of_day, day, weekday, week, month, year "
+            "(только если type=datetime)"
+        ),
     )
 
 

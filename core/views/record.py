@@ -2,6 +2,8 @@
 
 from uuid import UUID
 from core.schemas.record import (
+    CSVImportRequest,
+    CSVImportResponse,
     RecordCreateRequest,
     RecordUpdateRequest,
     RecordResponse,
@@ -10,8 +12,9 @@ from core.permissions import RequireTool
 from users.models import AppTools
 from core.services.record import RecordService
 from core.dependencies import get_record_service
+from csvloader import CSVImportValidationError
 import json
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from typing import Optional
 from minio.db import get_s3_client
 from minio.service import S3StorageService
@@ -82,6 +85,84 @@ def create_records_router(tool: AppTools) -> APIRouter:
             limit=limit,
             offset=offset,
         )
+
+    @router.get("/export-csv")
+    async def export_records_csv(
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        limit: int = Query(10000, ge=1, le=100000),
+        sort_by: Optional[str] = Query(
+            None, description="Имя поля внутри data для сортировки"
+        ),
+        descending: bool = Query(False, description="Сортировка по убыванию"),
+        filters: Optional[str] = Query(
+            None, description="JSON-строка фильтров. Например: {'age': {'$gt': 25}}"
+        ),
+        current_user=Depends(RequireTool(tool)),
+        record_service: RecordService = Depends(get_record_service),
+    ):
+        """Выгрузка записей шаблона в CSV с теми же фильтрами, что и список."""
+        parsed_filters = {}
+        if filters:
+            try:
+                parsed_filters = json.loads(filters)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400, detail="Invalid JSON format in filters parameter"
+                )
+
+        csv_content = await record_service.export_records_to_csv(
+            instance_uuid=instance_uuid,
+            template_uuid=template_uuid,
+            filters=parsed_filters,
+            sort_by=sort_by,
+            descending=descending,
+            limit=limit,
+        )
+        return Response(
+            content=csv_content,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{tool.value}-{template_uuid}.csv"'
+                )
+            },
+        )
+
+    @router.post(
+        "/import-csv",
+        response_model=CSVImportResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def import_records_csv(
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        payload: CSVImportRequest,
+        current_user=Depends(RequireTool(tool)),
+        record_service: RecordService = Depends(get_record_service),
+        s3_client=Depends(get_s3_client),
+    ):
+        """Импорт записей шаблона из CSV: вносятся поля data по схеме,
+        служебные поля создаются системой, каждая строка проходит полную
+        валидацию записи."""
+        s3_service = S3StorageService(s3_client)
+        try:
+            return await record_service.import_records_from_csv(
+                instance_uuid=instance_uuid,
+                template_uuid=template_uuid,
+                user_uuid=current_user.uuid,
+                csv_content=payload.csv_content,
+                delimiter=payload.delimiter,
+                s3_service=s3_service,
+            )
+        except CSVImportValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "CSV не прошёл валидацию, ничего не создано",
+                    "errors": exc.errors,
+                },
+            )
 
     @router.get("/deleted", response_model=PaginatedRecordsResponse)
     async def get_deleted_records(

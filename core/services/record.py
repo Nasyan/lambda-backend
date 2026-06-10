@@ -24,6 +24,8 @@ from core.validators.record import (
     RecordUniqueConstraintChecker,
 )
 from core.services.resolver_factory import RecordResolverFactory
+from csvloader import CSVLoader
+from exceptions.base import BaseAppException
 
 from triggers.service import AutomationService
 from triggers.models import EventType
@@ -166,6 +168,99 @@ class RecordService:
             "limit": limit,
             "offset": offset,
             "results": results,
+        }
+
+    async def export_records_to_csv(
+        self,
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        filters: Dict[str, Any],
+        sort_by: Optional[str],
+        descending: bool,
+        limit: int,
+    ) -> str:
+        """Задание 2 (2026-06-10): выгрузка записей шаблона в CSV по фильтрам.
+
+        Колонки: служебные поля + поля схемы шаблона. Фильтры — тот же
+        MongoDB-синтаксис, что и в get_records_list.
+        """
+        str_instance = str(instance_uuid)
+        str_template = str(template_uuid)
+        try:
+            template = await self.template_repo.get_template_by_uuid(
+                str_instance, str_template
+            )
+        except MongoTemplateNotFoundError:
+            raise TemplateNotFoundDomainError(
+                template_uuid=str_template, instance_uuid=str_instance
+            )
+
+        results, _total = await self.record_repo.get_records(
+            instance_uuid=str_instance,
+            template_uuid=str_template,
+            filters=filters,
+            sort_by=sort_by,
+            sort_descending=descending,
+            limit=limit,
+            offset=0,
+        )
+        return CSVLoader().records_to_csv(results, template.get("schema", {}))
+
+    async def import_records_from_csv(
+        self,
+        instance_uuid: UUID,
+        template_uuid: UUID,
+        user_uuid: UUID,
+        csv_content: str,
+        delimiter: str = ",",
+        s3_service: Any = None,
+    ) -> Dict[str, Any]:
+        """Задание 2 (2026-06-10): импорт записей шаблона из CSV.
+
+        Импортируются только поля из data (по схеме шаблона); служебные поля
+        создаёт система. Каждая строка проходит полный путь create_new_record
+        (формулы, валидация, уникальность, автоматизации). Ошибки приведения
+        типов валятся ДО создания (CSVImportValidationError, ничего не создано);
+        доменные ошибки отдельных строк собираются в отчёт, остальные строки
+        создаются.
+        """
+        str_instance = str(instance_uuid)
+        str_template = str(template_uuid)
+        try:
+            template = await self.template_repo.get_template_by_uuid(
+                str_instance, str_template
+            )
+        except MongoTemplateNotFoundError:
+            raise TemplateNotFoundDomainError(
+                template_uuid=str_template, instance_uuid=str_instance
+            )
+
+        payloads = CSVLoader(delimiter=delimiter).csv_to_record_payloads(
+            csv_content, template.get("schema", {})
+        )
+
+        created_ids = []
+        errors = []
+        for row_idx, data in enumerate(payloads, start=1):
+            try:
+                record = await self.create_new_record(
+                    instance_uuid=instance_uuid,
+                    template_uuid=template_uuid,
+                    user_uuid=user_uuid,
+                    data=data,
+                    s3_service=s3_service,
+                )
+                created_ids.append(str(record["_id"]))
+            except BaseAppException as exc:
+                errors.append(
+                    {"row": row_idx, "field": None, "detail": str(exc)}
+                )
+
+        return {
+            "created": len(created_ids),
+            "failed": len(errors),
+            "created_ids": created_ids,
+            "errors": errors,
         }
 
     async def update_existing_record(

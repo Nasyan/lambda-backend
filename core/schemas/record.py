@@ -32,3 +32,23 @@ class PaginatedRecordsResponse(BaseModel):
     limit: int  # Сколько запросили
     offset: int  # Сколько пропустили
     results: List[RecordResponse]  # Список самих записей
+
+
+class CSVImportRequest(BaseModel):
+    csv_content: str = Field(
+        ..., min_length=1, description="Содержимое CSV-файла (с заголовком)"
+    )
+    delimiter: str = Field(",", min_length=1, max_length=1)
+
+
+class CSVImportRowError(BaseModel):
+    row: int  # 1-based номер строки данных (без учёта заголовка)
+    field: Optional[str] = None
+    detail: str
+
+
+class CSVImportResponse(BaseModel):
+    created: int
+    failed: int
+    created_ids: List[str]
+    errors: List[CSVImportRowError]

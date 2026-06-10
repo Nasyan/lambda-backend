@@ -59,6 +59,9 @@ class AnalyticsRepository:
         schema_definition: Dict[str, Any],  # 🔥 Теперь схема обязательна
         ast_filter: Optional[Dict[str, Any]] = None,
         limit_data_points: int = 2000,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        date_field: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Компилирует AST фильтры в Mongo Pipeline и выполняет агрегацию на стороне БД.
@@ -72,7 +75,13 @@ class AnalyticsRepository:
             schema_definition=schema_definition,  # 🔥 Передаем схему в компилятор
         )
 
-        pipeline = builder.compile_chart(config=config, ast_filter=ast_filter)
+        pipeline = builder.compile_chart(
+            config=config,
+            ast_filter=ast_filter,
+            date_from=date_from,
+            date_to=date_to,
+            date_field=date_field,
+        )
         pipeline.append({"$limit": limit_data_points})
 
         start_time = start_mongo_timer()
