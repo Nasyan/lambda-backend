@@ -1,0 +1,180 @@
+{
+  "format_version": 1,
+  "templates": [
+    {
+      "uuid": "Inventory Products",
+      "name": "Inventory Products",
+      "schema": {
+        "sku": {
+          "type": "string",
+          "required": true
+        },
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "stock": {
+          "type": "number",
+          "required": true
+        },
+        "threshold": {
+          "type": "number",
+          "required": true
+        }
+      }
+    },
+    {
+      "uuid": "Inventory Reorders",
+      "name": "Inventory Reorders",
+      "schema": {
+        "sku": {
+          "type": "string",
+          "required": true
+        },
+        "status": {
+          "type": "string",
+          "required": true
+        },
+        "last_stock": {
+          "type": "number",
+          "required": false
+        }
+      }
+    },
+    {
+      "uuid": "Inventory Shipments",
+      "name": "Inventory Shipments",
+      "schema": {
+        "shipment_no": {
+          "type": "string",
+          "required": true
+        },
+        "payment": {
+          "type": "string",
+          "required": true
+        },
+        "lines": {
+          "type": "relation_list",
+          "target_template_uuid": "Inventory Products",
+          "required": true
+        }
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "name": "inventory: create reorder below threshold",
+      "trigger_type": "AUTOMATION",
+      "condition_ast": {
+        "type": "binary_op",
+        "operator": "lt",
+        "left": {
+          "type": "field",
+          "value": "stock"
+        },
+        "right": {
+          "type": "field",
+          "value": "threshold"
+        }
+      },
+      "payload_ast": {
+        "type": "object",
+        "fields": {
+          "sku": {
+            "type": "field",
+            "value": "sku"
+          }
+        }
+      },
+      "action_mapping_ast": {
+        "type": "object",
+        "fields": {
+          "sku": {
+            "type": "field",
+            "value": "sku"
+          },
+          "status": {
+            "type": "literal",
+            "value": "REORDER_NEEDED"
+          },
+          "last_stock": {
+            "type": "field",
+            "value": "stock"
+          }
+        }
+      },
+      "source_template_uuid": "Inventory Products",
+      "target_template_uuid": "Inventory Reorders",
+      "target_field": null,
+      "event_type": "ON_RECORD_UPDATE",
+      "cron_expression": null,
+      "action_name": "UPSERT_RECORD",
+      "action_params": {
+        "search_fields": [
+          "sku"
+        ],
+        "payload": {}
+      }
+    },
+    {
+      "name": "inventory: decrement stock by shipped lines",
+      "trigger_type": "AUTOMATION",
+      "condition_ast": {
+        "type": "binary_op",
+        "operator": "eq",
+        "left": {
+          "type": "field",
+          "value": "payment"
+        },
+        "right": {
+          "type": "literal",
+          "value": "card"
+        }
+      },
+      "payload_ast": {
+        "type": "field",
+        "value": "lines"
+      },
+      "action_mapping_ast": {
+        "type": "object",
+        "fields": {
+          "_id": {
+            "type": "field",
+            "value": "current_item.target_uuid"
+          },
+          "stock": {
+            "type": "object",
+            "fields": {
+              "op": {
+                "type": "literal",
+                "value": "inc"
+              },
+              "value": {
+                "type": "binary_op",
+                "operator": "multiply",
+                "left": {
+                  "type": "field",
+                  "value": "current_item.qty"
+                },
+                "right": {
+                  "type": "literal",
+                  "value": -1
+                }
+              }
+            }
+          }
+        }
+      },
+      "source_template_uuid": "Inventory Shipments",
+      "target_template_uuid": "Inventory Products",
+      "target_field": null,
+      "event_type": "ON_RECORD_CREATE",
+      "cron_expression": null,
+      "action_name": "UPDATE_RECORD",
+      "action_params": null
+    }
+  ],
+  "widgets": [],
+  "policies": [],
+  "notification_templates": []
+}

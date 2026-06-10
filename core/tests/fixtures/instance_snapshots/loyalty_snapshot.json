@@ -1,0 +1,211 @@
+{
+  "format_version": 1,
+  "templates": [
+    {
+      "uuid": "Loyalty Clients",
+      "name": "Loyalty Clients",
+      "schema": {
+        "phone": {
+          "type": "string",
+          "required": true
+        },
+        "name": {
+          "type": "string",
+          "required": false
+        },
+        "points": {
+          "type": "number",
+          "required": false
+        },
+        "orders_count": {
+          "type": "formula",
+          "required": false,
+          "ast": {
+            "type": "aggregation",
+            "target_template_uuid": "Loyalty Orders",
+            "filter_field": "client_phone",
+            "filter_value": {
+              "type": "field",
+              "value": "phone"
+            },
+            "agg_function": "count",
+            "agg_field": null
+          }
+        }
+      }
+    },
+    {
+      "uuid": "Loyalty Orders",
+      "name": "Loyalty Orders",
+      "schema": {
+        "client_phone": {
+          "type": "string",
+          "required": true
+        },
+        "client_name": {
+          "type": "string",
+          "required": true
+        },
+        "amount": {
+          "type": "number",
+          "required": true
+        },
+        "payment": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    {
+      "uuid": "Loyalty Rewards",
+      "name": "Loyalty Rewards",
+      "schema": {
+        "phone": {
+          "type": "string",
+          "required": true
+        },
+        "reward": {
+          "type": "string",
+          "required": true
+        }
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "name": "loyalty: issue gold reward once",
+      "trigger_type": "AUTOMATION",
+      "condition_ast": {
+        "type": "logical_op",
+        "operator": "and",
+        "left": {
+          "type": "binary_op",
+          "operator": "gt",
+          "left": {
+            "type": "field",
+            "value": "$new.points"
+          },
+          "right": {
+            "type": "literal",
+            "value": 100
+          }
+        },
+        "right": {
+          "type": "logical_op",
+          "operator": "not",
+          "left": {
+            "type": "binary_op",
+            "operator": "gt",
+            "left": {
+              "type": "field",
+              "value": "$old.points"
+            },
+            "right": {
+              "type": "literal",
+              "value": 100
+            }
+          }
+        }
+      },
+      "payload_ast": {
+        "type": "object",
+        "fields": {
+          "phone": {
+            "type": "field",
+            "value": "phone"
+          }
+        }
+      },
+      "action_mapping_ast": {
+        "type": "object",
+        "fields": {
+          "phone": {
+            "type": "field",
+            "value": "phone"
+          },
+          "reward": {
+            "type": "literal",
+            "value": "GOLD"
+          }
+        }
+      },
+      "source_template_uuid": "Loyalty Clients",
+      "target_template_uuid": "Loyalty Rewards",
+      "target_field": null,
+      "event_type": "ON_RECORD_UPDATE",
+      "cron_expression": null,
+      "action_name": "INSERT_RECORD",
+      "action_params": null
+    },
+    {
+      "name": "loyalty: paid order accrues points",
+      "trigger_type": "AUTOMATION",
+      "condition_ast": {
+        "type": "binary_op",
+        "operator": "eq",
+        "left": {
+          "type": "field",
+          "value": "payment"
+        },
+        "right": {
+          "type": "literal",
+          "value": "card"
+        }
+      },
+      "payload_ast": {
+        "type": "object",
+        "fields": {
+          "phone": {
+            "type": "field",
+            "value": "client_phone"
+          },
+          "amount": {
+            "type": "field",
+            "value": "amount"
+          }
+        }
+      },
+      "action_mapping_ast": {
+        "type": "object",
+        "fields": {
+          "phone": {
+            "type": "field",
+            "value": "client_phone"
+          },
+          "name": {
+            "type": "field",
+            "value": "client_name"
+          },
+          "points": {
+            "type": "object",
+            "fields": {
+              "op": {
+                "type": "literal",
+                "value": "inc"
+              },
+              "value": {
+                "type": "field",
+                "value": "amount"
+              }
+            }
+          }
+        }
+      },
+      "source_template_uuid": "Loyalty Orders",
+      "target_template_uuid": "Loyalty Clients",
+      "target_field": null,
+      "event_type": "ON_RECORD_CREATE",
+      "cron_expression": null,
+      "action_name": "UPSERT_RECORD",
+      "action_params": {
+        "search_fields": [
+          "phone"
+        ],
+        "payload": {}
+      }
+    }
+  ],
+  "widgets": [],
+  "policies": [],
+  "notification_templates": []
+}
