@@ -11,10 +11,11 @@
 Режимы: merge (поверх существующего) и replace (снести конфиг и загрузить
 bundle; previous_schema в ответе позволяет откатиться повторным импортом).
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from uuid import UUID, uuid4
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -77,14 +78,15 @@ def _remap_uuids(value: Any, id_map: Dict[str, str]) -> Any:
     return value
 
 
-def _topo_sort(
-    nodes: List[str], edges: Dict[str, set]
-) -> Tuple[List[str], List[str]]:
+def _topo_sort(nodes: List[str], edges: Dict[str, set]) -> Tuple[List[str], List[str]]:
     """Kahn. edges[A] = множество узлов, от которых A зависит (должны идти
     раньше). Возвращает (порядок, узлы_в_циклах). Детерминированно: ties — по
     порядку в nodes."""
     order: List[str] = []
-    remaining = {node: {dep for dep in edges.get(node, set()) if dep in nodes and dep != node} for node in nodes}
+    remaining = {
+        node: {dep for dep in edges.get(node, set()) if dep in nodes and dep != node}
+        for node in nodes
+    }
     ready = [node for node in nodes if not remaining[node]]
     while ready:
         current = ready.pop(0)
@@ -224,10 +226,22 @@ class InstanceSchemaService:
 
         # Дубликаты внутри bundle
         if len(template_uuid_set) != len(template_uuids):
-            errors.append(ImportIssue(object_type="template", detail="дубликаты uuid шаблонов в bundle"))
-        duplicate_names = {name for name in template_names if template_names.count(name) > 1}
+            errors.append(
+                ImportIssue(
+                    object_type="template", detail="дубликаты uuid шаблонов в bundle"
+                )
+            )
+        duplicate_names = {
+            name for name in template_names if template_names.count(name) > 1
+        }
         for name in sorted(duplicate_names):
-            errors.append(ImportIssue(object_type="template", name=name, detail="дубликат имени шаблона в bundle"))
+            errors.append(
+                ImportIssue(
+                    object_type="template",
+                    name=name,
+                    detail="дубликат имени шаблона в bundle",
+                )
+            )
 
         # Ссылочная целостность шаблонов (relation/relation_list/formula AST)
         template_deps: Dict[str, set] = {}
@@ -302,9 +316,7 @@ class InstanceSchemaService:
                     ImportIssue(
                         object_type="notification",
                         name=notification.name,
-                        detail=(
-                            "source_template_uuid не найден среди шаблонов bundle"
-                        ),
+                        detail=("source_template_uuid не найден среди шаблонов bundle"),
                     )
                 )
 
@@ -320,7 +332,9 @@ class InstanceSchemaService:
                 "циклические relation-связи шаблонов (создаются в исходном "
                 f"порядке): {', '.join(sorted(cyclic_names))}"
             )
-            template_order += [uuid for uuid in template_uuids if uuid in template_cycles]
+            template_order += [
+                uuid for uuid in template_uuids if uuid in template_cycles
+            ]
 
         # Порядок триггеров: B зависит от A, если A пишет в source-шаблон B
         # (каскад A → событие для B)

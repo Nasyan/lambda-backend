@@ -190,14 +190,20 @@ async def _export(test_client, instance_uuid, headers):
 class TestExport:
 
     @pytest.mark.asyncio
-    async def test_export_returns_full_bundle(self, test_client, create_test_environment):
+    async def test_export_returns_full_bundle(
+        self, test_client, create_test_environment
+    ):
         user_uuid, instance_uuid, headers = await create_test_environment()
         await _build_loyalty_instance(test_client, instance_uuid, headers)
 
         bundle = await _export(test_client, instance_uuid, headers)
 
         assert bundle["format_version"] == 1
-        assert {t["name"] for t in bundle["templates"]} == {"Заказы", "Клиенты", "Награды"}
+        assert {t["name"] for t in bundle["templates"]} == {
+            "Заказы",
+            "Клиенты",
+            "Награды",
+        }
         assert {t["name"] for t in bundle["triggers"]} == {
             "T1 upsert клиента",
             "T2 награда за повторный заказ",
@@ -250,8 +256,11 @@ class TestImportValidation:
         broken_bundle = {
             "format_version": 1,
             "templates": [
-                {"uuid": "11111111-1111-1111-1111-111111111111", "name": "Одинокий",
-                 "schema": {"title": {"type": "string", "required": True}}}
+                {
+                    "uuid": "11111111-1111-1111-1111-111111111111",
+                    "name": "Одинокий",
+                    "schema": {"title": {"type": "string", "required": True}},
+                }
             ],
             "triggers": [
                 {
@@ -390,7 +399,10 @@ class TestImportEndToEnd:
         own_template = await test_client.post(
             f"/instances/{dst_instance}/templates",
             headers=dst_headers,
-            json={"name": "Старый каталог", "schema": {"sku": {"type": "string", "required": True}}},
+            json={
+                "name": "Старый каталог",
+                "schema": {"sku": {"type": "string", "required": True}},
+            },
         )
         assert own_template.status_code == 201
 
@@ -408,7 +420,9 @@ class TestImportEndToEnd:
 
         after_replace = await _export(test_client, dst_instance, dst_headers)
         assert {t["name"] for t in after_replace["templates"]} == {
-            "Заказы", "Клиенты", "Награды",
+            "Заказы",
+            "Клиенты",
+            "Награды",
         }
 
         # Откат: загружаем previous_schema в режиме replace

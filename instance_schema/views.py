@@ -1,6 +1,7 @@
 # instance_schema/views.py
 
 """HTTP-слой выгрузки/загрузки схемы инстанса (задание 4, 2026-06-10)."""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -28,7 +29,9 @@ def get_instance_schema_service(
     return InstanceSchemaService(db=db, mongo_db=mongo_db)
 
 
-@router.get("/export", response_model=InstanceSchemaBundle, response_model_by_alias=True)
+@router.get(
+    "/export", response_model=InstanceSchemaBundle, response_model_by_alias=True
+)
 async def export_instance_schema(
     instance_uuid: UUID,
     instance: Instances = Depends(get_current_instance_creator),

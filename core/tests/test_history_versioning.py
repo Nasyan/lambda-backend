@@ -36,19 +36,23 @@ class TestRecordLifecycleHistory:
         notes_url = f"/instances/{instance_uuid}/templates/{tpl_id}/notes"
 
         created = await test_client.post(
-            notes_url, headers=headers, json={"data": {"name": "Отчёт", "status": "draft"}}
+            notes_url,
+            headers=headers,
+            json={"data": {"name": "Отчёт", "status": "draft"}},
         )
         record_uuid = created.json()["_id"]
         assert created.json()["version"] == 1
 
         patch1 = await test_client.patch(
-            f"{notes_url}/{record_uuid}", headers=headers,
+            f"{notes_url}/{record_uuid}",
+            headers=headers,
             json={"data": {"status": "review"}},
         )
         assert patch1.json()["version"] == 2
 
         patch2 = await test_client.patch(
-            f"{notes_url}/{record_uuid}", headers=headers,
+            f"{notes_url}/{record_uuid}",
+            headers=headers,
             json={"data": {"status": "published"}},
         )
         assert patch2.json()["version"] == 3
@@ -78,7 +82,9 @@ class TestRecordLifecycleHistory:
         )
         record_uuid = created.json()["_id"]
         await test_client.patch(
-            f"{notes_url}/{record_uuid}", headers=headers, json={"data": {"status": "b"}}
+            f"{notes_url}/{record_uuid}",
+            headers=headers,
+            json={"data": {"status": "b"}},
         )
 
         resp = await test_client.get(
@@ -98,11 +104,15 @@ class TestRecordLifecycleHistory:
         notes_url = f"/instances/{instance_uuid}/templates/{tpl_id}/notes"
 
         created = await test_client.post(
-            notes_url, headers=headers, json={"data": {"name": "Времянка", "status": "x"}}
+            notes_url,
+            headers=headers,
+            json={"data": {"name": "Времянка", "status": "x"}},
         )
         record_uuid = created.json()["_id"]
         await test_client.patch(
-            f"{notes_url}/{record_uuid}", headers=headers, json={"data": {"status": "y"}}
+            f"{notes_url}/{record_uuid}",
+            headers=headers,
+            json={"data": {"status": "y"}},
         )  # v2
 
         delete_resp = await test_client.delete(

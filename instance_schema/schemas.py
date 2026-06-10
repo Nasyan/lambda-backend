@@ -6,6 +6,7 @@ Bundle — «огромный json» со ВСЕЙ конфигурацией CR
 triggers, analytics widgets, storefront policies, notification templates.
 Данные (records) и история в bundle НЕ входят — это конфигурация, не контент.
 """
+
 from __future__ import annotations
 
 from enum import Enum
