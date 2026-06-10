@@ -16,6 +16,7 @@ from store.views import router as store_router
 from policy.views import router as policy_router
 from users.views.client_api import router as client_router
 from notifications.views import router as notification_router
+from instance_schema.views import router as instance_schema_router
 from core.views.record import create_records_router
 from users.models import AppTools
 from redisdb.utils import init_redis, close_redis
@@ -75,6 +76,7 @@ app.include_router(store_router)
 app.include_router(policy_router)
 app.include_router(client_router)
 app.include_router(notification_router)
+app.include_router(instance_schema_router)
 
 register_exception_handlers(app)
 

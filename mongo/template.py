@@ -101,6 +101,31 @@ class TemplateRepository:
 
         return normalize_template(template_document)
 
+    async def set_template_schema(
+        self, instance_uuid: str, template_uuid: str, schema: Dict[str, Any]
+    ) -> None:
+        """Полная замена schema шаблона (instance_schema: финальный ремап
+        ссылок после создания всех шаблонов bundle). Схема валидируется тем же
+        последним рубежом, что и при создании."""
+        _validate_template_schema(schema)
+
+        query = with_active_filter(
+            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+        )
+        update = {"$set": {"schema": schema}}
+        result = await execute_logged_mongo_call(
+            self.collection,
+            "update_one",
+            query,
+            lambda: self.collection.update_one(query, update),
+            lambda item: item.modified_count,
+            update=update,
+        )
+        if result.matched_count == 0:
+            raise TemplateNotFoundError(
+                template_uuid=template_uuid, instance_uuid=instance_uuid
+            )
+
     async def get_template_by_uuid(
         self, instance_uuid: str, template_uuid: str
     ) -> Dict[str, Any]:

@@ -32,5 +32,13 @@ class AnalyticsWidgetRepository:
     def add(self, widget: AnalyticsWidget) -> None:
         self.db.add(widget)
 
+    async def list(self, instance_uuid: UUID) -> list[AnalyticsWidget]:
+        result = await self.db.execute(
+            select(AnalyticsWidget).where(
+                AnalyticsWidget.instance_uuid == instance_uuid
+            )
+        )
+        return list(result.scalars().all())
+
     async def delete(self, widget: AnalyticsWidget) -> None:
         await self.db.delete(widget)
