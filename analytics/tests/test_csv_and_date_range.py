@@ -15,7 +15,11 @@ from analytics.schemas import ChartConfigPayload
 
 def _datetime_config(date_bucket: str = "day") -> ChartConfigPayload:
     return ChartConfigPayload(
-        axis_x={"field": "purchased_at", "type": "datetime", "date_bucket": date_bucket},
+        axis_x={
+            "field": "purchased_at",
+            "type": "datetime",
+            "date_bucket": date_bucket,
+        },
         axis_y={"field": "_id", "aggregation": "COUNT"},
     )
 
@@ -29,7 +33,9 @@ class TestDateRangePipelineUnit:
             _datetime_config(), date_from="2026-06-01", date_to="2026-06-07"
         )
         assert pipeline[1] == {
-            "$match": {"data.purchased_at": {"$gte": "2026-06-01", "$lte": "2026-06-07"}}
+            "$match": {
+                "data.purchased_at": {"$gte": "2026-06-01", "$lte": "2026-06-07"}
+            }
         }
 
     def test_open_ended_range_only_from(self):
@@ -73,7 +79,9 @@ class TestDateRangePipelineUnit:
             ("day", "%Y-%m-%d"),
         ],
     )
-    def test_datetime_buckets_compile_to_expected_formats(self, bucket, expected_format):
+    def test_datetime_buckets_compile_to_expected_formats(
+        self, bucket, expected_format
+    ):
         builder = MongoPipelineBuilder(str(uuid.uuid4()), str(uuid.uuid4()))
         pipeline = builder.compile_chart(_datetime_config(bucket))
         group_stage = next(stage for stage in pipeline if "$group" in stage)
@@ -116,7 +124,9 @@ async def _bootstrap_purchases(test_client, instance_uuid, headers, purchases):
     return tpl_id
 
 
-async def _create_widget(test_client, instance_uuid, headers, tpl_id, widget_type, chart_config):
+async def _create_widget(
+    test_client, instance_uuid, headers, tpl_id, widget_type, chart_config
+):
     resp = await test_client.post(
         f"/instances/{instance_uuid}/widgets",
         headers=headers,
@@ -211,7 +221,9 @@ class TestWidgetDateRangeE2E:
                 day = f"2026-06-{base_day + offset:02d}"
                 purchases.append((80, f"{day}T13:00:00", "еда"))
 
-        tpl_id = await _bootstrap_purchases(test_client, instance_uuid, headers, purchases)
+        tpl_id = await _bootstrap_purchases(
+            test_client, instance_uuid, headers, purchases
+        )
         widget_id = await _create_widget(
             test_client,
             instance_uuid,

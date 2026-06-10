@@ -252,9 +252,7 @@ class RecordService:
                 )
                 created_ids.append(str(record["_id"]))
             except BaseAppException as exc:
-                errors.append(
-                    {"row": row_idx, "field": None, "detail": str(exc)}
-                )
+                errors.append({"row": row_idx, "field": None, "detail": str(exc)})
 
         return {
             "created": len(created_ids),

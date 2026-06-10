@@ -19,7 +19,10 @@ async def _bootstrap_template(test_client, instance_uuid, headers, schema=None):
     tpl = await test_client.post(
         f"/instances/{instance_uuid}/templates",
         headers=headers,
-        json={"name": f"Клиенты {uuid.uuid4().hex[:6]}", "schema": schema or CLIENTS_SCHEMA},
+        json={
+            "name": f"Клиенты {uuid.uuid4().hex[:6]}",
+            "schema": schema or CLIENTS_SCHEMA,
+        },
     )
     assert tpl.status_code == 201, tpl.text
     return tpl.json()["_id"]
@@ -173,8 +176,7 @@ class TestRecordsCSVImport:
         tpl_id = await _bootstrap_template(test_client, instance_uuid, headers)
 
         csv_content = (
-            "_id,name,age,version,unknown_column\n"
-            f"{uuid.uuid4()},Иван,30,99,мусор\n"
+            "_id,name,age,version,unknown_column\n" f"{uuid.uuid4()},Иван,30,99,мусор\n"
         )
         resp = await test_client.post(
             f"/instances/{instance_uuid}/templates/{tpl_id}/notes/import-csv",
@@ -202,7 +204,11 @@ class TestRecordsCSVImport:
 
         for name, age in (("Иван", 30), ("Оля", 40)):
             await _create_record(
-                test_client, instance_uuid, source_tpl, headers, {"name": name, "age": age}
+                test_client,
+                instance_uuid,
+                source_tpl,
+                headers,
+                {"name": name, "age": age},
             )
 
         export_resp = await test_client.get(

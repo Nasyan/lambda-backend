@@ -10,6 +10,7 @@
 и парсятся обратно при импорте. Пустая ячейка при импорте = «поле не задано»
 (required-валидация остаётся за RecordService).
 """
+
 from __future__ import annotations
 
 import csv
@@ -72,7 +73,9 @@ class CSVLoader:
         )
         writer.writeheader()
         for row in rows:
-            writer.writerow({key: self._serialize_value(row.get(key)) for key in fieldnames})
+            writer.writerow(
+                {key: self._serialize_value(row.get(key)) for key in fieldnames}
+            )
         return buffer.getvalue()
 
     def analytics_to_csv(self, data_points: Iterable[Dict[str, Any]]) -> str:
@@ -213,7 +216,9 @@ class CSVLoader:
             try:
                 return json.loads(raw_value)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"ожидался JSON для {field_type}: {raw_value!r}") from exc
+                raise ValueError(
+                    f"ожидался JSON для {field_type}: {raw_value!r}"
+                ) from exc
 
         # string / date / select / email / phone / relation — строка как есть
         return raw_value

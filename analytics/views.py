@@ -48,10 +48,12 @@ async def get_widget_data(
     instance_uuid: UUID,
     widget_uuid: UUID,
     date_from: Optional[str] = Query(
-        None, description="Начало диапазона (ISO-8601, включительно), например 2026-06-01"
+        None,
+        description="Начало диапазона (ISO-8601, включительно), например 2026-06-01",
     ),
     date_to: Optional[str] = Query(
-        None, description="Конец диапазона (ISO-8601, включительно), например 2026-06-30"
+        None,
+        description="Конец диапазона (ISO-8601, включительно), например 2026-06-30",
     ),
     date_field: Optional[str] = Query(
         None,
