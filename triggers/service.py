@@ -15,6 +15,8 @@ from engine.evaluator import FormulaEvaluator
 from mongo.template import TemplateRepository
 from mongo.tools.utils import with_active_filter
 from logs.mongo import log_mongo_query, start_mongo_timer
+from redisdb.cache import CacheLayer, build_cache_layer
+import config as cfg
 
 # Импортируем наши профессиональные исключения
 from triggers.exceptions.action import AutomationExecutionError, SystemContractViolation
@@ -42,6 +44,7 @@ class AutomationService:
         manual_input: Optional[Any] = None,
         cascade_depth: int = 0,
         previous_document: Optional[Dict[str, Any]] = None,
+        trigger_cache: Optional[CacheLayer] = None,
     ) -> Dict[str, Any]:
         if cascade_depth > cls.MAX_CASCADE_DEPTH:
             raise AutomationExecutionError(
@@ -52,9 +55,13 @@ class AutomationService:
 
         pg_session = await cls._ensure_session(pg_session)
         normalized_event = cls._normalize_event_type(event_type)
+        cache = trigger_cache or build_cache_layer(
+            "TRIGGERS_CACHE_DB", cfg.TRIGGERS_CACHE_TTL
+        )
         receptor = EventReceptor(
             pg_session=pg_session,
             mongo_db=mongo_db,
+            trigger_cache=cache,
         )
         event_context = await receptor.capture(
             event_type=normalized_event,
@@ -84,6 +91,7 @@ class AutomationService:
                 manual_input=manual_input,
                 cascade_depth=nested_depth,
                 previous_document=nested_previous_document,
+                trigger_cache=cache,
             )
 
         for trigger in event_context.triggers:
@@ -154,6 +162,7 @@ class AutomationService:
         document: Dict[str, Any],
         manual_input: Optional[Any] = None,
         cascade_depth: int = 0,
+        trigger_cache: Optional[CacheLayer] = None,
     ) -> Dict[str, Any]:
         template_repo = TemplateRepository(mongo_db)
         template = await template_repo.get_template(
@@ -192,6 +201,7 @@ class AutomationService:
                 manual_input=manual_input,
                 cascade_depth=nested_depth,
                 previous_document=nested_previous_document,
+                trigger_cache=trigger_cache,
             )
 
         result = await cls._run_trigger_pipeline(
@@ -251,6 +261,7 @@ class AutomationService:
         event_type: EventType,
         current_record: Dict[str, Any],
         previous_record: Optional[Dict[str, Any]] = None,
+        trigger_cache: Optional[CacheLayer] = None,
     ) -> None:
         """
         Ищет активные триггеры автоматизации в Postgres и последовательно выполняет их.
@@ -268,6 +279,7 @@ class AutomationService:
             event_type=event_type,
             document=current_record,
             previous_document=previous_record,
+            trigger_cache=trigger_cache,
         )
 
     @classmethod

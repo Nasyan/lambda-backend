@@ -18,6 +18,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from mongo.record import RecordRepository
 from core.services.record import RecordService
 from core.services.schema_migration import SchemaMigrationService
+from redisdb.cache import CacheLayer
+from redisdb.utils import get_redis_db
+import config as cfg
 
 # Профессиональные исключения безопасности контуров (Multi-tenancy)
 from core.exceptions.dependecies import (
@@ -94,11 +97,36 @@ async def get_record_service(
     )
 
 
-async def get_template_service(mongo_db=Depends(get_mongo_db)) -> TemplateService:
+def get_template_cache(
+    redis_client=Depends(get_redis_db("TEMPLATE_CACHE_DB")),
+) -> CacheLayer:
+    return CacheLayer(redis_client, cfg.TEMPLATE_CACHE_TTL, enabled=cfg.CACHE_ENABLED)
+
+
+def get_trigger_cache(
+    redis_client=Depends(get_redis_db("TRIGGERS_CACHE_DB")),
+) -> CacheLayer:
+    return CacheLayer(redis_client, cfg.TRIGGERS_CACHE_TTL, enabled=cfg.CACHE_ENABLED)
+
+
+def get_analytics_cache(
+    redis_client=Depends(get_redis_db("ANALYTICS_CACHE_DB")),
+) -> CacheLayer:
+    return CacheLayer(redis_client, cfg.ANALYTICS_CACHE_TTL, enabled=cfg.CACHE_ENABLED)
+
+
+async def get_template_service(
+    mongo_db=Depends(get_mongo_db),
+    cache: CacheLayer = Depends(get_template_cache),
+) -> TemplateService:
     repository = TemplateRepository(mongo_db)
     record_repo = RecordRepository(mongo_db)
     schema_migration = SchemaMigrationService(record_repo)
-    return TemplateService(repository, schema_migration=schema_migration)
+    return TemplateService(
+        repository,
+        schema_migration=schema_migration,
+        cache=cache,
+    )
 
 
 async def get_current_instance_user(

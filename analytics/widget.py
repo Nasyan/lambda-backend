@@ -9,6 +9,13 @@ from analytics.repository import AnalyticsWidgetRepository
 from analytics.schemas import WidgetCreateRequest, WidgetUpdateRequest
 from mongo.analytics import AnalyticsRepository
 from analytics.schemas import ChartConfigPayload
+from redisdb.cache import (
+    CacheLayer,
+    analytics_cache_key,
+    analytics_widget_cache_pattern,
+    build_cache_layer,
+)
+import config as cfg
 
 # Импортируем чистое доменное исключение
 from analytics.exceptions import WidgetNotFoundError
@@ -27,8 +34,30 @@ class WidgetService:
         raise WidgetNotFoundError(widget_uuid=widget_uuid, instance_uuid=instance_uuid)
 
     @classmethod
+    def _cache(cls, analytics_cache: Optional[CacheLayer] = None) -> CacheLayer:
+        return analytics_cache or build_cache_layer(
+            "ANALYTICS_CACHE_DB", cfg.ANALYTICS_CACHE_TTL
+        )
+
+    @classmethod
+    async def _invalidate_widget_cache(
+        cls,
+        instance_uuid: UUID,
+        widget_uuid: UUID,
+        analytics_cache: Optional[CacheLayer] = None,
+    ) -> None:
+        cache = cls._cache(analytics_cache)
+        await cache.delete_pattern(
+            analytics_widget_cache_pattern(instance_uuid, widget_uuid)
+        )
+
+    @classmethod
     async def create_widget(
-        cls, instance_uuid: UUID, payload: WidgetCreateRequest, db: AsyncSession
+        cls,
+        instance_uuid: UUID,
+        payload: WidgetCreateRequest,
+        db: AsyncSession,
+        analytics_cache: Optional[CacheLayer] = None,
     ) -> AnalyticsWidget:
         widget = AnalyticsWidget(
             instance_uuid=instance_uuid,
@@ -41,6 +70,7 @@ class WidgetService:
         AnalyticsWidgetRepository(db).add(widget)
         await db.commit()
         await db.refresh(widget)
+        await cls._invalidate_widget_cache(instance_uuid, widget.id, analytics_cache)
         return widget
 
     @classmethod
@@ -53,7 +83,20 @@ class WidgetService:
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
         date_field: Optional[str] = None,
+        analytics_cache: Optional[CacheLayer] = None,
     ) -> List[Dict[str, Any]]:
+        cache = cls._cache(analytics_cache)
+        cache_key = analytics_cache_key(
+            instance_uuid=instance_uuid,
+            widget_uuid=widget_uuid,
+            date_from=date_from,
+            date_to=date_to,
+            date_field=date_field,
+        )
+        cached_data = await cache.get_json(cache_key)
+        if cached_data is not None:
+            return cached_data
+
         # 1. Достаем метаданные графика из Postgres
         widget = await AnalyticsWidgetRepository(db).get(instance_uuid, widget_uuid)
         if not widget:
@@ -78,6 +121,7 @@ class WidgetService:
             date_field=date_field,
         )
 
+        await cache.set_json(cache_key, data)
         return data
 
     @classmethod
@@ -87,6 +131,7 @@ class WidgetService:
         instance_uuid: UUID,
         payload: WidgetUpdateRequest,
         db: AsyncSession,
+        analytics_cache: Optional[CacheLayer] = None,
     ) -> AnalyticsWidget:
         widget = await AnalyticsWidgetRepository(db).get(instance_uuid, widget_uuid)
         if not widget:
@@ -102,11 +147,16 @@ class WidgetService:
 
         await db.commit()
         await db.refresh(widget)
+        await cls._invalidate_widget_cache(instance_uuid, widget_uuid, analytics_cache)
         return widget
 
     @classmethod
     async def delete_widget(
-        cls, widget_uuid: UUID, instance_uuid: UUID, db: AsyncSession
+        cls,
+        widget_uuid: UUID,
+        instance_uuid: UUID,
+        db: AsyncSession,
+        analytics_cache: Optional[CacheLayer] = None,
     ) -> None:
         widget = await AnalyticsWidgetRepository(db).get(instance_uuid, widget_uuid)
         if not widget:
@@ -114,3 +164,4 @@ class WidgetService:
 
         await AnalyticsWidgetRepository(db).delete(widget)
         await db.commit()
+        await cls._invalidate_widget_cache(instance_uuid, widget_uuid, analytics_cache)

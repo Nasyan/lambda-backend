@@ -111,6 +111,18 @@ EMAIL_DB = require_int_env("EMAIL_DB")
 TASK_DB = require_int_env("TASK_DB")
 REGISTRATION_DB = require_int_env("REGISTRATION_DB")
 LOGIN_DB = require_int_env("LOGIN_DB")
+TEMPLATE_CACHE_DB = int(os.getenv("TEMPLATE_CACHE_DB", "4"))
+TRIGGERS_CACHE_DB = int(os.getenv("TRIGGERS_CACHE_DB", "5"))
+ANALYTICS_CACHE_DB = int(os.getenv("ANALYTICS_CACHE_DB", "6"))
+CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+TEMPLATE_CACHE_TTL = int(os.getenv("TEMPLATE_CACHE_TTL", "3600"))
+TRIGGERS_CACHE_TTL = int(os.getenv("TRIGGERS_CACHE_TTL", "1800"))
+ANALYTICS_CACHE_TTL = int(os.getenv("ANALYTICS_CACHE_TTL", "300"))
 SET_ACTIVITY = require_env("SET_ACTIVITY")
 RESET_PREFIX = require_env("RESET_PREFIX")
 JOIN_PREFIX = require_env("JOIN_PREFIX")

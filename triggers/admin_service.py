@@ -21,6 +21,8 @@ from triggers.repository import TriggerRepository
 from triggers.validator import TriggerSchemaValidator
 from triggers.exceptions.action import TriggerNotFoundDomainError
 from middleware.schemas import ListParameters
+from redisdb.cache import CacheLayer, build_cache_layer, triggers_cache_pattern
+import config as cfg
 
 
 def _dump_action_params(action_params: Any) -> Any:
@@ -35,11 +37,18 @@ class TriggerAdminService:
         db: AsyncSession,
         template_repo: TemplateRepository,
         trigger_meta_repo: TriggerMetadataRepository,
+        trigger_cache: Optional[CacheLayer] = None,
     ):
         self.db = db
         self.repo = TriggerRepository(db)
         self.template_repo = template_repo
         self.trigger_meta_repo = trigger_meta_repo
+        self.trigger_cache = trigger_cache or build_cache_layer(
+            "TRIGGERS_CACHE_DB", cfg.TRIGGERS_CACHE_TTL
+        )
+
+    async def _invalidate_trigger_cache(self, instance_uuid: UUID) -> None:
+        await self.trigger_cache.delete_pattern(triggers_cache_pattern(instance_uuid))
 
     async def list_triggers(
         self, instance_uuid: UUID, params: Optional[ListParameters] = None
@@ -108,6 +117,7 @@ class TriggerAdminService:
 
         await self.db.commit()
         await self.db.refresh(db_trigger)
+        await self._invalidate_trigger_cache(instance_uuid)
         return db_trigger
 
     async def update_trigger(
@@ -173,6 +183,7 @@ class TriggerAdminService:
 
         await self.db.commit()
         await self.db.refresh(trigger)
+        await self._invalidate_trigger_cache(instance_uuid)
         return trigger
 
     async def delete_trigger(
@@ -193,6 +204,7 @@ class TriggerAdminService:
 
         await self.repo.delete(trigger)
         await self.db.commit()
+        await self._invalidate_trigger_cache(instance_uuid)
 
     @staticmethod
     def _trigger_validation_data(trigger: Trigger) -> Dict[str, Any]:

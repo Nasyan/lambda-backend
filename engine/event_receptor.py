@@ -9,7 +9,64 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from engine.batch_loader import BatchDataLoader
 from engine.evaluator import EvaluationScope
 from mongo.template import TemplateRepository
-from triggers.models import EventType, Trigger, TriggerType
+from redisdb.cache import CacheLayer, triggers_cache_key
+from triggers.models import EventType, PayloadReturnType, Trigger, TriggerType
+
+TRIGGER_CACHE_FIELDS = (
+    "id",
+    "instance_uuid",
+    "name",
+    "trigger_type",
+    "event_type",
+    "condition_ast",
+    "payload_ast",
+    "payload_return_type",
+    "action_mapping_ast",
+    "source_template_uuid",
+    "target_template_uuid",
+    "target_field",
+    "action_name",
+    "action_params",
+    "cron_expression",
+)
+
+TRIGGER_UUID_FIELDS = (
+    "id",
+    "instance_uuid",
+    "source_template_uuid",
+    "target_template_uuid",
+)
+
+TRIGGER_ENUM_FIELDS = {
+    "trigger_type": TriggerType,
+    "event_type": EventType,
+    "payload_return_type": PayloadReturnType,
+}
+
+
+def _serialize_trigger(trigger: Trigger) -> Dict[str, Any]:
+    data = {}
+    for field_name in TRIGGER_CACHE_FIELDS:
+        value = getattr(trigger, field_name, None)
+        if hasattr(value, "value"):
+            value = value.value
+        elif isinstance(value, UUID):
+            value = str(value)
+        data[field_name] = value
+    return data
+
+
+def _deserialize_trigger(data: Dict[str, Any]) -> Trigger:
+    trigger_data = dict(data)
+    for field_name in TRIGGER_UUID_FIELDS:
+        value = trigger_data.get(field_name)
+        if value is not None:
+            trigger_data[field_name] = UUID(str(value))
+    for field_name, enum_type in TRIGGER_ENUM_FIELDS.items():
+        value = trigger_data.get(field_name)
+        if value is not None and not isinstance(value, enum_type):
+            trigger_data[field_name] = enum_type(value)
+    return Trigger(**trigger_data)
 
 
 @dataclass
@@ -32,10 +89,12 @@ class EventReceptor:
         pg_session: AsyncSession,
         mongo_db: AsyncIOMotorDatabase,
         template_repo: Optional[TemplateRepository] = None,
+        trigger_cache: Optional[CacheLayer] = None,
     ):
         self.pg_session = pg_session
         self.mongo_db = mongo_db
         self.template_repo = template_repo or TemplateRepository(mongo_db)
+        self.trigger_cache = trigger_cache
 
     async def capture(
         self,
@@ -87,6 +146,15 @@ class EventReceptor:
         instance_uuid: str,
         template_uuid: str,
     ) -> List[Trigger]:
+        if self.trigger_cache is not None:
+            cache_key = triggers_cache_key(instance_uuid, template_uuid, event_type)
+            cached_triggers = await self.trigger_cache.get_json(cache_key)
+            if cached_triggers is not None:
+                try:
+                    return [_deserialize_trigger(item) for item in cached_triggers]
+                except Exception:
+                    pass
+
         stmt = select(Trigger).where(
             Trigger.instance_uuid == UUID(str(instance_uuid)),
             Trigger.source_template_uuid == UUID(str(template_uuid)),
@@ -94,7 +162,13 @@ class EventReceptor:
             Trigger.event_type == event_type,
         )
         result = await self.pg_session.execute(stmt)
-        return list(result.scalars().all())
+        triggers = list(result.scalars().all())
+        if self.trigger_cache is not None:
+            await self.trigger_cache.set_json(
+                triggers_cache_key(instance_uuid, template_uuid, event_type),
+                [_serialize_trigger(trigger) for trigger in triggers],
+            )
+        return triggers
 
     async def _get_source_schema(
         self, instance_uuid: str, template_uuid: str

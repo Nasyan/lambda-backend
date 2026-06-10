@@ -10,9 +10,10 @@ from csvloader import CSVLoader
 
 from database.db import get_db
 from mongo.db import get_mongo_db
-from core.dependencies import get_current_instance_creator
+from core.dependencies import get_analytics_cache, get_current_instance_creator
 from users.models import Instances, Users, AppTools
 from jsonwebtoken.utils import get_current_user
+from redisdb.cache import CacheLayer
 
 from analytics.schemas import WidgetCreateRequest, WidgetResponse, WidgetUpdateRequest
 
@@ -34,12 +35,16 @@ async def create_widget(
     instance: Instances = Depends(get_current_instance_creator),
     current_user: Users = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    analytics_cache: CacheLayer = Depends(get_analytics_cache),
 ):
     """Создает новый график/виджет для дашборда текущего инстанса"""
     # Дополнительная защита: принудительно пишем UUID инстанса из проверенной зависимости,
     # чтобы пользователь не мог подделать его внутри payload.
     return await WidgetService.create_widget(
-        instance_uuid=instance.uuid, payload=payload, db=db
+        instance_uuid=instance.uuid,
+        payload=payload,
+        db=db,
+        analytics_cache=analytics_cache,
     )
 
 
@@ -67,6 +72,7 @@ async def get_widget_data(
     mongo_db: AsyncIOMotorDatabase = Depends(
         get_mongo_db
     ),  # 🔥 Добавили явный тип Motor
+    analytics_cache: CacheLayer = Depends(get_analytics_cache),
 ):
     """
     Главный эндпоинт аналитики.
@@ -84,6 +90,7 @@ async def get_widget_data(
         date_from=date_from,
         date_to=date_to,
         date_field=date_field,
+        analytics_cache=analytics_cache,
     )
 
 
@@ -107,6 +114,7 @@ async def export_widget_data_csv(
     current_user: Users = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    analytics_cache: CacheLayer = Depends(get_analytics_cache),
 ):
     """Выгрузка точек графика виджета в CSV (label/value) с опциональным
     диапазоном дат — те же данные, что и /data, но файлом."""
@@ -118,6 +126,7 @@ async def export_widget_data_csv(
         date_from=date_from,
         date_to=date_to,
         date_field=date_field,
+        analytics_cache=analytics_cache,
     )
     csv_content = CSVLoader().analytics_to_csv(data)
     return Response(
@@ -137,6 +146,7 @@ async def update_widget(
     instance: Instances = Depends(get_current_instance_creator),
     current_user: Users = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    analytics_cache: CacheLayer = Depends(get_analytics_cache),
 ):
     """Частичное обновление настроек, фильтров или типа графика"""
     return await WidgetService.update_widget(
@@ -144,6 +154,7 @@ async def update_widget(
         instance_uuid=instance.uuid,  # Защита изоляции
         payload=payload,
         db=db,
+        analytics_cache=analytics_cache,
     )
 
 
@@ -154,8 +165,12 @@ async def delete_widget(
     instance: Instances = Depends(get_current_instance_creator),
     current_user: Users = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    analytics_cache: CacheLayer = Depends(get_analytics_cache),
 ):
     """Удаление виджета аналитики"""
     await WidgetService.delete_widget(
-        widget_uuid=widget_uuid, instance_uuid=instance.uuid, db=db  # Защита изоляции
+        widget_uuid=widget_uuid,
+        instance_uuid=instance.uuid,
+        db=db,  # Защита изоляции
+        analytics_cache=analytics_cache,
     )

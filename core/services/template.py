@@ -9,6 +9,12 @@ from engine.schema_rules import NoCodeSchemaValidator
 from core.services.template_integrity import TemplateIntegrityService
 from core.services.schema_migration import SchemaMigrationService
 from middleware.schemas import ListParameters
+from redisdb.cache import (
+    CacheLayer,
+    template_cache_key,
+    template_list_cache_key,
+    template_list_cache_pattern,
+)
 
 # Доменные ошибки слоя Mongo (контракт API сохраняем неизменным)
 from mongo.exceptions.template import (
@@ -37,9 +43,20 @@ class TemplateService:
         self,
         template_repo: TemplateRepository,
         schema_migration: Optional[SchemaMigrationService] = None,
+        cache: Optional[CacheLayer] = None,
     ):
         self.template_repo = template_repo
         self.schema_migration = schema_migration
+        self.cache = cache
+
+    async def _invalidate_template_cache(
+        self, instance_uuid: str, template_uuid: Optional[str] = None
+    ) -> None:
+        if self.cache is None:
+            return
+        if template_uuid:
+            await self.cache.delete(template_cache_key(instance_uuid, template_uuid))
+        await self.cache.delete_pattern(template_list_cache_pattern(instance_uuid))
 
     async def _get_template_or_raise(
         self, instance_uuid: str, template_uuid: str
@@ -78,12 +95,16 @@ class TemplateService:
 
         NoCodeSchemaValidator.check_circular_dependencies(schema_definition)
 
-        return await self.template_repo.create_template(
+        created_template = await self.template_repo.create_template(
             instance_uuid=str(instance_uuid),
             name=name,
             schema=schema_definition,
             user_uuid=str(user_uuid),
         )
+        await self._invalidate_template_cache(
+            str(instance_uuid), created_template.get("_id")
+        )
+        return created_template
 
     async def delete_template(
         self,
@@ -114,6 +135,7 @@ class TemplateService:
             instance_uuid=str_instance,
             template_uuid=str_template,
         )
+        await self._invalidate_template_cache(str_instance, str_template)
 
     async def add_column(
         self,
@@ -141,13 +163,15 @@ class TemplateService:
 
         NoCodeSchemaValidator.check_circular_dependencies(temp_schema)
 
-        return await self.template_repo.add_column(
+        updated_template = await self.template_repo.add_column(
             instance_uuid=str_instance,
             template_uuid=str_template,
             column_name=column_name,
             field_meta=field_meta,
             user_uuid=str(user_uuid),
         )
+        await self._invalidate_template_cache(str_instance, str_template)
+        return updated_template
 
     async def update_template_metadata(
         self,
@@ -193,12 +217,14 @@ class TemplateService:
                         template_uuid=str_template,
                     )
 
-        return await self.template_repo.update_template_metadata(
+        updated_template = await self.template_repo.update_template_metadata(
             instance_uuid=str_instance,
             template_uuid=str_template,
             name=name,
             user_uuid=str(user_uuid),
         )
+        await self._invalidate_template_cache(str_instance, str_template)
+        return updated_template
 
     async def drop_column(
         self,
@@ -233,12 +259,14 @@ class TemplateService:
                     column_name=column_name,
                 )
 
-        return await self.template_repo.drop_column(
+        updated_template = await self.template_repo.drop_column(
             instance_uuid=str_instance,
             template_uuid=str_template,
             column_name=column_name,
             user_uuid=str(user_uuid),
         )
+        await self._invalidate_template_cache(str_instance, str_template)
+        return updated_template
 
     async def update_column_meta(
         self,
@@ -315,20 +343,35 @@ class TemplateService:
                 )
 
         # 6. Глупый I/O
-        return await self.template_repo.update_column_meta(
+        updated_template = await self.template_repo.update_column_meta(
             instance_uuid=str_instance,
             template_uuid=str_template,
             column_name=column_name,
             new_meta=new_meta,
             user_uuid=str(user_uuid),
         )
+        await self._invalidate_template_cache(str_instance, str_template)
+        return updated_template
 
     async def get_template(
         self,
         instance_uuid: UUID,
         template_uuid: UUID,
     ) -> Dict[str, Any]:
-        return await self._get_template_or_raise(str(instance_uuid), str(template_uuid))
+        str_instance = str(instance_uuid)
+        str_template = str(template_uuid)
+        if self.cache is not None:
+            cache_key = template_cache_key(str_instance, str_template)
+            cached_template = await self.cache.get_json(cache_key)
+            if cached_template is not None:
+                return cached_template
+
+        template = await self._get_template_or_raise(str_instance, str_template)
+        if self.cache is not None:
+            await self.cache.set_json(
+                template_cache_key(str_instance, str_template), template
+            )
+        return template
 
     async def find_by_name(
         self,
@@ -345,10 +388,22 @@ class TemplateService:
         instance_uuid: UUID,
         params: Optional[ListParameters] = None,  # 🔥 Делаем опциональным
     ) -> list[dict[str, Any]]:
-        return await self.template_repo.get_all_templates(
+        str_instance = str(instance_uuid)
+        if self.cache is not None:
+            cache_key = template_list_cache_key(str_instance, params=params)
+            cached_templates = await self.cache.get_json(cache_key)
+            if cached_templates is not None:
+                return cached_templates
+
+        templates = await self.template_repo.get_all_templates(
             instance_uuid=str(instance_uuid),
             params=params,  # Прокидываем дальше (может быть None)
         )
+        if self.cache is not None:
+            await self.cache.set_json(
+                template_list_cache_key(str_instance, params=params), templates
+            )
+        return templates
 
     async def get_deleted_templates(
         self,
@@ -382,7 +437,9 @@ class TemplateService:
                 instance_uuid=str_instance,
             )
 
-        return await self.template_repo.restore_template(
+        restored_template = await self.template_repo.restore_template(
             instance_uuid=str_instance,
             template_uuid=str_template,
         )
+        await self._invalidate_template_cache(str_instance, str_template)
+        return restored_template

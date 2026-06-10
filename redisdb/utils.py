@@ -15,6 +15,9 @@ async def init_redis():
         "TASK_DB": config.TASK_DB,
         "REGISTRATION_DB": config.REGISTRATION_DB,
         "LOGIN_DB": config.LOGIN_DB,
+        "TEMPLATE_CACHE_DB": config.TEMPLATE_CACHE_DB,
+        "TRIGGERS_CACHE_DB": config.TRIGGERS_CACHE_DB,
+        "ANALYTICS_CACHE_DB": config.ANALYTICS_CACHE_DB,
     }
 
     for name, db in dbs.items():

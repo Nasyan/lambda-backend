@@ -40,6 +40,8 @@ from core.exceptions.dependecies import (
     InstanceAccessDeniedError,
     InstanceNotFoundError,
 )
+from core.dependencies import get_trigger_cache
+from redisdb.cache import CacheLayer
 from triggers.exceptions.action import (
     AutomationValidationError,
     AutomationExecutionError,
@@ -84,11 +86,13 @@ def get_trigger_admin_service(
     trigger_meta_repo: TriggerMetadataRepository = Depends(
         get_trigger_metadata_repository
     ),
+    trigger_cache: CacheLayer = Depends(get_trigger_cache),
 ) -> TriggerAdminService:
     return TriggerAdminService(
         db=db,
         template_repo=template_repo,
         trigger_meta_repo=trigger_meta_repo,
+        trigger_cache=trigger_cache,
     )
 
 
