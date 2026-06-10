@@ -53,5 +53,8 @@ class ContextInterpolator:
             if isinstance(current, dict) and part in current:
                 current = current[part]
             else:
+                data = obj.get("data") if isinstance(obj, dict) else None
+                if isinstance(data, dict) and parts[0] != "data":
+                    return cls._get_value_by_path(path, data)
                 return None
         return current

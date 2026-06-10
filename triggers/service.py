@@ -98,6 +98,9 @@ class AutomationService:
             )
             results.append({"trigger_id": str(trigger.id), "result": result})
 
+        if hasattr(pg_session, "commit"):
+            await pg_session.commit()
+
         return {"status": "success", "trigger_results": results}
 
     @classmethod
@@ -191,7 +194,7 @@ class AutomationService:
                 previous_document=nested_previous_document,
             )
 
-        return await cls._run_trigger_pipeline(
+        result = await cls._run_trigger_pipeline(
             trigger=trigger,
             event_scope=scope,
             data_loader=data_loader,
@@ -200,6 +203,9 @@ class AutomationService:
             cascade_depth=cascade_depth,
             cascade_callback=cascade_callback,
         )
+        if hasattr(pg_session, "commit"):
+            await pg_session.commit()
+        return result
 
     @classmethod
     async def _run_trigger_pipeline(
@@ -308,7 +314,7 @@ class AutomationService:
         """
         stmt = select(Trigger).where(
             Trigger.trigger_type == TriggerType.AUTOMATION,
-            Trigger.event_type == EventType.CRON,
+            Trigger.event_type.in_([EventType.CRON, EventType.ON_TIME]),
         )
 
         if hasattr(pg_session, "execute"):
@@ -327,6 +333,16 @@ class AutomationService:
 
             template_uuid_str = str(trigger.source_template_uuid)
             instance_uuid_str = str(trigger.instance_uuid)
+            template_repo = TemplateRepository(mongo_db)
+            source_template = await template_repo.get_template(
+                instance_uuid=instance_uuid_str,
+                template_uuid=template_uuid_str,
+            )
+            source_schema = source_template.get("schema", {})
+            data_loader = BatchDataLoader(
+                mongo_db=mongo_db,
+                instance_uuid=instance_uuid_str,
+            )
 
             # Пакетная вычитка с пагинацией по _id (task3, ГЗ-2 п.3):
             # длинный открытый курсор `async for record in cursor` на больших
@@ -368,28 +384,21 @@ class AutomationService:
                 for record in batch:
                     # 🔥 ТОЧКА ИЗОЛЯЦИИ: Создаем SAVEPOINT или управляем commit/rollback поштучно
                     try:
-                        is_valid = await cls._evaluate_condition(
-                            trigger.name, trigger.condition_ast, record
-                        )
-
-                        if not is_valid:
-                            continue
-
-                        await cls._run_trigger_pipeline(
+                        pipeline_result = await cls._run_trigger_pipeline(
                             trigger=trigger,
                             event_scope=EvaluationScope(
                                 document=record,
                                 instance_uuid=instance_uuid_str,
+                                source_schema=source_schema,
                             ),
-                            data_loader=BatchDataLoader(
-                                mongo_db=mongo_db,
-                                instance_uuid=instance_uuid_str,
-                            ),
+                            data_loader=data_loader,
                             mongo_db=mongo_db,
                             pg_session=pg_session,
                             cascade_depth=0,
                             cascade_callback=None,
                         )
+                        if pipeline_result.get("status") == "skipped":
+                            continue
 
                         # 🔥 ФИКС: Коммитим Postgres транзакцию строго для ТЕКУЩЕЙ успешной записи
                         if hasattr(pg_session, "commit"):

@@ -4,6 +4,7 @@ from uuid import UUID
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from notifications.models import NotificationHistory, NotificationInbox
+from workers.email_tasks import send_email
 
 
 class NotificationDispatcher:
@@ -26,20 +27,17 @@ class NotificationDispatcher:
             UUID(template_uuid) if isinstance(template_uuid, str) else template_uuid
         )
 
-        # Создаем запись в логе истории
-        history = NotificationHistory(
-            instance_uuid=inst_uuid,
-            template_uuid=tmpl_uuid,
-            compiled_title=title,
-            compiled_body=body,
-            target_channels=channels,
-            success_count=len(recipients),
-        )
-        pg_session.add(history)
-        await pg_session.flush()  # Получаем сформированный базой history.uuid
-
-        # Маршрутизация по каналам
         if "crm" in channels:
+            history = NotificationHistory(
+                instance_uuid=inst_uuid,
+                template_uuid=tmpl_uuid,
+                compiled_title=title,
+                compiled_body=body,
+                target_channels=channels,
+                success_count=len(recipients),
+            )
+            pg_session.add(history)
+            await pg_session.flush()
             await NotificationDispatcher._dispatch_to_crm(
                 pg_session, history.uuid, recipients
             )
@@ -80,8 +78,12 @@ class NotificationDispatcher:
     @staticmethod
     async def _dispatch_to_email(emails: List[str], title: str, body: str):
         """Отправка задачи в Dramatiq / Celery."""
-        # my_dramatiq_worker.send_email_batch.send(emails, title, body)
-        pass
+        for email in emails:
+            send_email.send(
+                receiver_email=email,
+                subject=title,
+                body=body,
+            )
 
     @staticmethod
     async def _dispatch_to_telegram(tg_ids: List[str], title: str, body: str):

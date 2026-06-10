@@ -26,20 +26,18 @@ class NotificationTemplateService:
     ) -> UUID:
         """Создает шаблон и валидирует его No-Code плейсхолдеры."""
         new_uuid = uuid.uuid4()
+        source_template_uuid = payload_data.pop("source_template_uuid", None)
+        entity_mappings = payload_data.pop("entity_mappings", None)
 
-        # 1. Запускаем валидацию масок, только если переданы маппинги сущностей
-        entity_mappings = payload_data.get("entity_mappings")
-        if entity_mappings:
-            await TemplateIntegrityService.validate_notification_template(
-                instance_uuid=instance_uuid,
-                title=payload_data.get("title", ""),
-                body=payload_data.get("body", ""),
-                entity_mappings=entity_mappings,
-                template_repo=mongo_template_repo,
-            )
+        await TemplateIntegrityService.validate_notification_template(
+            instance_uuid=instance_uuid,
+            title=payload_data.get("title", ""),
+            body=payload_data.get("body", ""),
+            entity_mappings=entity_mappings,
+            template_repo=mongo_template_repo,
+            source_template_uuid=source_template_uuid,
+        )
 
-        # 2. 🔥 Фикс TypeError: исключаем entity_mappings из инициализации SQLAlchemy модели,
-        # если его нет в схеме таблицы PostgreSQL
         template = NotificationTemplate(
             uuid=new_uuid,
             instance_uuid=instance_uuid,
@@ -48,8 +46,6 @@ class NotificationTemplateService:
             body=payload_data["body"],
             channels=payload_data["channels"],
             recipients_config=payload_data["recipients_config"],
-            # Если в твоей модели Postgres маппинги хранятся под другим именем,
-            # замапь его сюда, например: extra_config=payload_data.get("entity_mappings")
         )
         NotificationTemplateRepository(db).add(template)
         await db.commit()
@@ -89,27 +85,26 @@ class NotificationTemplateService:
         current_template = await NotificationTemplateService.get_template_by_uuid(
             db, instance_uuid, template_uuid
         )
+        source_template_uuid = update_data.pop("source_template_uuid", None)
+        entity_mappings = update_data.pop("entity_mappings", None)
 
-        # Мержим данные для валидации
         full_title = update_data.get("title", current_template.title)
         full_body = update_data.get("body", current_template.body)
-
-        # 🔥 Проверяем наличие entity_mappings в апдейте или в базе
-        full_mappings = update_data.get(
-            "entity_mappings", getattr(current_template, "entity_mappings", None)
+        should_validate = any(key in update_data for key in ("title", "body")) or any(
+            value is not None for value in (source_template_uuid, entity_mappings)
         )
-
-        if full_mappings:
+        if should_validate:
             await TemplateIntegrityService.validate_notification_template(
                 instance_uuid=instance_uuid,
                 title=full_title,
                 body=full_body,
-                entity_mappings=full_mappings,
+                entity_mappings=entity_mappings,
                 template_repo=mongo_template_repo,
+                source_template_uuid=source_template_uuid,
             )
 
-        # Избегаем передачи несуществующего поля в UPDATE запрос SQLAlchemy
-        update_data.pop("entity_mappings", None)
+        if not update_data:
+            return template_uuid
 
         updated_uuid = await NotificationTemplateRepository(db).update_values(
             instance_uuid, template_uuid, update_data

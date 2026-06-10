@@ -8,7 +8,6 @@
 
 import random
 
-from config import SENDER_EMAIL, EMAIL_PASSWORD
 from workers.email_tasks import send_email
 
 
@@ -28,8 +27,6 @@ class RegistrationVerificationNotifier:
         )
         code_word = "новый код" if repeat else "код"
         send_email.send(
-            sender_email=SENDER_EMAIL,
-            password=EMAIL_PASSWORD,
             receiver_email=email,
             subject=subject,
             body=(

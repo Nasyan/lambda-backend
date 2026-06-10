@@ -18,6 +18,7 @@ class TriggerType(str, Enum):
 
 class EventType(str, Enum):
     CRON = "CRON"  # По расписанию (раз в день/час)
+    ON_TIME = "ON_TIME"  # Алиас временных workflow-триггеров
     ON_RECORD_CREATE = "ON_RECORD_CREATE"  # При создании новой записи в Mongo
     ON_RECORD_UPDATE = "ON_RECORD_UPDATE"  # При изменении записи в Mongo
     MANUAL = "MANUAL"  # Вызывается вручную (например, кнопка "Разослать всем")
