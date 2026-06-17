@@ -157,7 +157,7 @@ def create_records_router(tool: AppTools) -> APIRouter:
             )
         except CSVImportValidationError as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "message": "CSV не прошёл валидацию, ничего не создано",
                     "errors": exc.errors,

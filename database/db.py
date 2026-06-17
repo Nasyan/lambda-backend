@@ -32,11 +32,12 @@ class Base(DeclarativeBase):
 
 
 engine = create_async_engine(
-    url=DATABASE_URL,
-    pool_pre_ping=True,
-    echo=True,
+    DATABASE_URL,
+    pool_size=20,  # 👈 Сколько подключений держать открытыми ВСЕГДА
+    max_overflow=10,  # 👈 Сколько максимум можно открыть сверху при пиковой нагрузке
+    pool_timeout=30,  # Сколько секунд ждать свободное подключение из пула перед падением в 500
+    pool_recycle=1800,  # Сбрасывать подключение каждые 30 мин (защита от утечек памяти в БД)
 )
-
 SessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,

@@ -11,7 +11,12 @@ class MongoDB:
 
     def connect(self):
         try:
-            self.client = AsyncIOMotorClient(MONGO_URL)
+            self.client = AsyncIOMotorClient(
+                MONGO_URL,
+                maxPoolSize=100,  # 👈 Потолок подключений для одного воркера FastAPI
+                minPoolSize=10,  # 👈 Держать готовыми минимум 10 подключений
+                waitQueueTimeoutMS=2000,  # Ждать свободное подключение максимум 2 секунды
+            )
             self.db = self.client[MONGO_DB_NAME]
             print(f"Connected to MongoDB {MONGO_URL.split("@")[-1]}")
         except Exception as e:

@@ -68,7 +68,7 @@ async def import_instance_schema(
     if not report.valid and not report.created:
         # Валидация не прошла — изменений не было
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=report.model_dump(mode="json"),
         )
     return report
