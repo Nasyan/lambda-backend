@@ -18,6 +18,7 @@ from users.exceptions.admin_service import (
     UserAlreadyExistsError,
     CreatorAlreadyDeactivatedError,
     InvalidAdminCredentialsError,
+    UserNotFoundError,
 )
 
 
@@ -108,3 +109,28 @@ class AdminService:
     async def list_all_instances(self) -> list[Instances]:
         result = await self.db.execute(select(Instances).order_by(Instances.title))
         return result.scalars().all()
+
+    async def delete_user(self, user_uuid: UUID) -> None:
+        """
+        Полное физическое удаление пользователя из базы данных.
+        """
+        result = await self.db.execute(select(Users).where(Users.uuid == user_uuid))
+        user = result.scalar_one_or_none()
+
+        if not user:
+            # Исключение, аналогичное твоим (создадим его ниже)
+            raise UserNotFoundError(user_uuid=user_uuid)
+
+        await self.db.delete(user)
+        await self.db.commit()
+
+    async def delete_instance(self, instance_id: UUID) -> None:
+        """
+        Полное физическое удаление инстанса из базы данных.
+        Если к инстансу привязаны каскадные связи (например, каскадное удаление),
+        SQLAlchemy выполнит это на уровне БД.
+        """
+        instance = await self.get_instance_or_404(instance_id)
+
+        await self.db.delete(instance)
+        await self.db.commit()

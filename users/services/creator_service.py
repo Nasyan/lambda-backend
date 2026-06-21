@@ -176,3 +176,17 @@ class CreatorService:
             raise InfrastructureStorageError(
                 context_message=error_message, reason=str(e)
             )
+
+    async def list_instance_users(self, creator: Users) -> list[Users]:
+        """
+        Возвращает список всех пользователей (сотрудников и других креаторов),
+        привязанных к текущему инстансу компании.
+        """
+        stmt = (
+            select(Users)
+            .where(Users.instance_id == creator.instance_id)
+            .options(joinedload(Users.permissions))
+            .order_by(Users._email)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()

@@ -114,3 +114,37 @@ async def deactivate_user(
             "message": f"User {target_user.email} has been successfully deactivated.",
         },
     )
+
+
+@router.get("/users/", response_model=None)
+async def list_instance_users(
+    current_user: Users = Depends(get_current_creator),
+    service: CreatorService = Depends(get_creator_service),
+):
+    """
+    Получение списка всех пользователей, зарегистрированных в инстансе текущего Креатора.
+    Учитывает связь One-to-One с UserPermissions и массив строк allowed_tools.
+    """
+    users = await service.list_instance_users(current_user)
+
+    result = []
+    for user in users:
+        # Безопасно извлекаем инструменты.
+        # Если записи в user_permissions еще нет, по дефолту у твоей модели ["all"],
+        # но на случай None в БД подстрахуемся пустым списком.
+        allowed_tools_list = []
+        if user.permissions and user.permissions.allowed_tools:
+            allowed_tools_list = user.permissions.allowed_tools
+
+        result.append(
+            {
+                "uuid": str(user.uuid),
+                "email": user.email,  # Использует твой hybrid_property
+                "name": user.name,
+                "role": user.role.value,  # Конвертируем Enum в строку для фронтенда
+                "active": user.active,
+                "allowed_tools": allowed_tools_list,
+            }
+        )
+
+    return result

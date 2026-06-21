@@ -247,7 +247,7 @@ class AuthService:
             payload={
                 "sub": str(user.uuid),
                 "role": user.role.value,
-                "instance_id": str(user.instance_id) if user.instance_id else None,
+                "instance_uuid": str(user.instance_id) if user.instance_id else None,
                 "type": "access",
                 "exp": now + timedelta(minutes=30),
             }

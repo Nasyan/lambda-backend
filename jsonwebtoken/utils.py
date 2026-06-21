@@ -1,5 +1,3 @@
-# jsonwebtoken/utils.py
-
 from pathlib import Path
 from typing import Annotated
 import jwt
@@ -230,6 +228,75 @@ async def get_current_creator(
     Зависимость проверяет, что пользователь имеет роль CREATOR
     и привязан к активному инстансу.
     """
+    if current_user.role != UserRole.CREATOR:
+        raise InsufficientPermissionsError("Only creators can access this resource.")
+
+    if not current_user.instance_id:
+        raise InstanceAssociationError()
+
+    return current_user
+
+
+# =====================================================================
+# 🔥 НОВЫЕ СВЕРХБЫСТРЫЕ МУЛЬТИАРЕНДНЫЕ ЗАВИСИМОСТИ (БЕЗ НАГРУЗКИ НА БД)
+# =====================================================================
+
+
+def get_current_instance_uuid(token: Annotated[str, Depends(oauth2_scheme)]) -> str:
+    """
+    ⚡ ВЫСОКОПРОИЗВОДИТЕЛЬНАЯ ЗАВИСИМОСТЬ.
+    Извлекает инстанс-идентификатор напрямую из памяти (JWT Payload).
+    Не делает ни одного запроса к PostgreSQL.
+    """
+    if not token:
+        raise InvalidTokenError(
+            "Missing authentication token header.", reason="token_missing"
+        )
+
+    try:
+        payload = decode_jwt(token)
+        instance_uuid: str = payload.get("instance_uuid")
+        if not instance_uuid:
+            raise InstanceAssociationError(
+                "Данный пользовательский токен не ассоциирован с инстансом."
+            )
+        return instance_uuid
+    except AuthDomainException:
+        raise
+    except Exception:
+        raise InvalidTokenError(
+            "Не удалось валидировать контекст аренды (Multi-tenant) из токена.",
+            reason="malformed_payload",
+        )
+
+
+async def get_current_instance_creator(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    current_user: Users = Depends(get_current_active_user),
+) -> Users:
+    """
+    🛡️ ОПТИМИЗИРОВАННАЯ КЛИЕНТСКАЯ ПРОВЕРКА.
+    Сначала быстро проверяет метаданные роли и инстанса в JWT,
+    чтобы гарантировать безопасность перед тяжелыми операциями.
+    """
+    try:
+        payload = decode_jwt(token)
+        role = payload.get("role")
+        instance_uuid = payload.get("instance_uuid")
+
+        if role != UserRole.CREATOR.value:
+            raise InsufficientPermissionsError(
+                "Доступ разрешен только создателям инстанса."
+            )
+
+        if not instance_uuid:
+            raise InstanceAssociationError()
+    except AuthDomainException:
+        raise
+    except Exception:
+        pass  # Фолбэк на классическую валидацию из БД, если токен старого формата
+
+    # Проверяем классический контракт через SQLAlchemy на случай деактивации аккаунта
     if current_user.role != UserRole.CREATOR:
         raise InsufficientPermissionsError("Only creators can access this resource.")
 

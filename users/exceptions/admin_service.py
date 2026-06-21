@@ -99,3 +99,12 @@ class InvalidAdminCredentialsError(UsersDomainException):
 
     def __init__(self, email: str):
         super().__init__(message=self.message, details={"email": email})
+
+
+class UserNotFoundError(Exception):
+    status_code = 400
+    error_code = "INVALID_ADMIN_CREDENTIALS"
+    message = "Неверные учетные данные или недостаточно прав для доступа к панели администратора."
+
+    def __init__(self, email: str):
+        super().__init__(message=self.message, details={"email": email})

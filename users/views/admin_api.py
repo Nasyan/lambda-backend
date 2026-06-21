@@ -99,3 +99,27 @@ async def deactivate_creator(
     current_user: Users = Depends(get_current_admin),
 ):
     return await service.deactivate_creator(creator_uuid)
+
+
+@router.delete("/users/{user_uuid}/", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_uuid: UUID,
+    service: AdminService = Depends(get_admin_service),
+    current_user: Users = Depends(get_current_admin),
+):
+    """
+    Эндпоинт для полного удаления пользователя из CRM по его UUID.
+    """
+    await service.delete_user(user_uuid)
+
+
+@router.delete("/instances/{instance_id}/", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_instance(
+    instance_id: UUID,
+    service: AdminService = Depends(get_admin_service),
+    current_user: Users = Depends(get_current_admin),
+):
+    """
+    Эндпоинт для полного удаления инстанса компании по его UUID.
+    """
+    await service.delete_instance(instance_id)
