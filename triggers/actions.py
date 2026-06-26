@@ -271,8 +271,14 @@ class ActionRegistry:
         context = targets[0] if targets else {}
         payload_data = ContextInterpolator.interpolate(raw_payload, context)
 
+        # _id keying fix (audit CRITICAL #2): раньше писали только "uuid" без "_id",
+        # Mongo назначала случайный ObjectId, а резолвер/связи ищут запись по _id ->
+        # связь к авто-созданной записи не находилась и схлопывалась в 0. Делаем
+        # _id == uuid, чтобы авто-запись была разрешима так же, как обычные записи.
+        new_record_id = str(uuid.uuid4())
         record_document = {
-            "uuid": str(uuid.uuid4()),
+            "_id": new_record_id,
+            "uuid": new_record_id,
             "instance_uuid": str(instance_uuid),
             "template_uuid": str(target_template_uuid),
             "data": payload_data,
@@ -401,6 +407,9 @@ class ActionRegistry:
             },
             # $setOnInsert запишет эти поля ТОЛЬКО если документа не было
             "$setOnInsert": {
+                # _id keying fix (audit CRITICAL #2): задаём _id == uuid, иначе при
+                # вставке Mongo назначит ObjectId и связи по _id не разрешатся.
+                "_id": generated_uuid,
                 "uuid": generated_uuid,
                 "instance_uuid": str(instance_uuid),
                 "template_uuid": str(target_template_uuid),

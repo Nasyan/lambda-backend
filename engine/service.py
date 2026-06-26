@@ -5,7 +5,7 @@ from .ast import parse_ast
 from .evaluator import FormulaEvaluator
 
 from engine.extractor import RelationExtractor
-from engine.exceptions.evaluator import FormulaValidationError, FormulaEvaluationError
+from engine.exceptions.evaluator import FormulaValidationError, FormulaEngineException
 
 
 class FormulaService:
@@ -96,7 +96,12 @@ class FormulaService:
                 else:
                     updated_data[column_name] = result
 
-            except FormulaEvaluationError:
+            except FormulaEngineException:
+                # Любая ошибка движка формул на одной колонке -> NULL этой колонки,
+                # а не падение всего сохранения записи. Раньше ловили только
+                # FormulaEvaluationError, а её «сёстры» (TypeMismatch/DateFormat/
+                # ResolverRequired) рушили весь save (audit HIGH). Ошибка уже
+                # залогирована в FormulaEvaluator.evaluate.
                 if "data" in updated_data and isinstance(updated_data["data"], dict):
                     updated_data["data"][column_name] = None
                 else:
