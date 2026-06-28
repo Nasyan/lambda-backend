@@ -576,3 +576,59 @@ class TestCascadingTreeIntegration:
             headers=headers,
         )
         assert resp_incomplete.status_code in [400, 422]
+
+
+@pytest.mark.asyncio
+async def test_create_primitive_record_in_tables_endpoint(
+    test_client, create_test_environment
+):
+    """
+    Верификация эндпоинта /tables: создание шаблона с примитивными полями
+    и последующее добавление записи через метод POST.
+    """
+    # 1. Подготавливаем окружение (инстанс, юзер, авторизационные заголовки)
+    user_uuid, instance_uuid, headers = await create_test_environment()
+
+    # 2.Payload шаблона с базовыми типами: строка и число
+    template_payload = {
+        "name": "Тестовая Таблица Примитивов",
+        "schema": {
+            "title": {"type": "string", "required": True},
+            "quantity": {"type": "number", "required": False},
+        },
+    }
+
+    # Создаем шаблон
+    tpl_resp = await test_client.post(
+        f"/instances/{instance_uuid}/templates",
+        json=template_payload,
+        headers=headers,
+    )
+    assert tpl_resp.status_code == 201, f"Не удалось создать шаблон: {tpl_resp.json()}"
+
+    template_uuid = tpl_resp.json()["_id"]
+
+    # 3. Тестируем отправку записи на эндпоинт /tables
+    record_payload = {"data": {"title": "Первый тестовый элемент", "quantity": 10}}
+
+    response = await test_client.post(
+        f"/instances/{instance_uuid}/templates/{template_uuid}/tables",
+        json=record_payload,
+        headers=headers,
+    )
+
+    # Выводим детальный лог ошибки бэкенда, если тест упадет с 422
+    if response.status_code != 201:
+        print(f"\n[BACKEND ERROR DETAIL] Status: {response.status_code}")
+        print(f"[RESPONSE JSON]: {response.json()}")
+
+    # Проверяем успешность операции
+    assert response.status_code == 201
+
+    # Проверяем структуру ответа
+    response_data = response.json()
+    assert response_data["instance_uuid"] == str(instance_uuid)
+    assert response_data["template_uuid"] == str(template_uuid)
+    assert response_data["data"]["title"] == "Первый тестовый элемент"
+    assert response_data["data"]["quantity"] == 10
+    assert response_data["is_deleted"] is False

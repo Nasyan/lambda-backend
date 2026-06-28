@@ -7,6 +7,7 @@ from health.views import router as health_router
 from users.views.creator_api import router as creator_router
 from users.views.admin_api import router as admin_router
 from users.views.user_api import router as auth_router
+from users.views.profile_api import router as profile_router
 from core.views.template import router as instance_router
 from core.views.history import router as history_router
 from minio.views import router as storage_router
@@ -77,6 +78,7 @@ app.include_router(policy_router)
 app.include_router(client_router)
 app.include_router(notification_router)
 app.include_router(instance_schema_router)
+app.include_router(profile_router)
 
 register_exception_handlers(app)
 

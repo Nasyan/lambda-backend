@@ -165,3 +165,12 @@ class WidgetService:
         await AnalyticsWidgetRepository(db).delete(widget)
         await db.commit()
         await cls._invalidate_widget_cache(instance_uuid, widget_uuid, analytics_cache)
+
+    @classmethod
+    async def list_widgets(
+        cls,
+        instance_uuid: UUID,
+        db: AsyncSession,
+    ) -> List[AnalyticsWidget]:
+        """Получает список всех метаданных виджетов инстанса."""
+        return await AnalyticsWidgetRepository(db).list(instance_uuid)

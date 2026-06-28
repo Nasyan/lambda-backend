@@ -188,3 +188,21 @@ async def get_template(
         instance_uuid=instance_uuid,
         template_uuid=template_uuid,
     )
+
+
+@router.delete("/{template_uuid}/force", status_code=status.HTTP_204_NO_CONTENT)
+async def force_delete_template(
+    instance_uuid: UUID,
+    template_uuid: UUID,
+    instance: Instances = Depends(get_current_instance_creator),
+    current_user: Users = Depends(get_current_user),
+    template_service: TemplateService = Depends(get_template_service),
+):
+    """Безвозвратное (hard delete) удаление шаблона, его записей и истории.
+    Возможно только для шаблонов, находящихся в корзине (is_deleted=True).
+    """
+    await template_service.force_delete_template(
+        instance_uuid=instance_uuid,
+        template_uuid=template_uuid,
+        user_uuid=current_user.uuid,
+    )

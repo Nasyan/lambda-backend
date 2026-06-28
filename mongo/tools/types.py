@@ -429,6 +429,6 @@ FIELD_STRATEGIES_REGISTRY: Dict[str, type[BaseFieldStrategy]] = {
     "datetime": DateTimeField,
     "url": UrlField,
     "phone": PhoneField,
-    "relation_list": RelationListField,  # 🔥 Регистрируем стратегию поля списка связей
+    "relation_list": RelationListField,
     "cascading_tree": CascadingTreeField,
 }

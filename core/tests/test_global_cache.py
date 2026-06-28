@@ -85,7 +85,14 @@ async def test_template_cache_miss_then_hit(redis_clean, test_client):
     }
     repo = CountingTemplateRepository(template)
     cache = CacheLayer(redis_clean["TEMPLATE_CACHE_DB"], ttl=60, enabled=True)
-    service = TemplateService(repo, cache=cache)
+
+    # ИСПРАВЛЕНО: Передаем все обязательные аргументы по ключу
+    service = TemplateService(
+        template_repo=repo,
+        record_repo=SimpleNamespace(),
+        schema_migration=SimpleNamespace(),
+        cache=cache,
+    )
 
     first = await service.get_template(instance_uuid, template_uuid)
     second = await service.get_template(instance_uuid, template_uuid)
@@ -109,7 +116,14 @@ async def test_template_mutation_invalidates_object_and_lists(redis_clean):
     }
     repo = CountingTemplateRepository(template)
     cache = CacheLayer(redis_clean["TEMPLATE_CACHE_DB"], ttl=60, enabled=True)
-    service = TemplateService(repo, cache=cache)
+
+    # ИСПРАВЛЕНО: Передаем все обязательные аргументы по ключу
+    service = TemplateService(
+        template_repo=repo,
+        record_repo=SimpleNamespace(),
+        schema_migration=SimpleNamespace(),
+        cache=cache,
+    )
     template_key = template_cache_key(instance_uuid, template_uuid)
     list_key = template_list_cache_key(instance_uuid)
 
@@ -148,8 +162,12 @@ async def test_cache_enabled_false_skips_redis_reads_and_writes(
             "created_by": str(uuid4()),
         }
     )
+
+    # ИСПРАВЛЕНО: Передаем все обязательные аргументы по ключу
     service = TemplateService(
-        repo,
+        template_repo=repo,
+        record_repo=SimpleNamespace(),
+        schema_migration=SimpleNamespace(),
         cache=build_cache_layer("TEMPLATE_CACHE_DB", ttl=60),
     )
 

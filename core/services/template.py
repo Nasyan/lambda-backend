@@ -4,6 +4,10 @@ from uuid import UUID
 from typing import Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions.record import (
+    TemplateNotFoundDomainError,
+)
+from mongo.record import RecordRepository
 from mongo.template import TemplateRepository
 from engine.schema_rules import NoCodeSchemaValidator
 from core.services.template_integrity import TemplateIntegrityService
@@ -41,10 +45,12 @@ class TemplateService:
 
     def __init__(
         self,
+        record_repo: RecordRepository,
         template_repo: TemplateRepository,
         schema_migration: Optional[SchemaMigrationService] = None,
         cache: Optional[CacheLayer] = None,
     ):
+        self.record_repo = record_repo
         self.template_repo = template_repo
         self.schema_migration = schema_migration
         self.cache = cache
@@ -443,3 +449,45 @@ class TemplateService:
         )
         await self._invalidate_template_cache(str_instance, str_template)
         return restored_template
+
+    async def force_delete_template(
+        self, instance_uuid: UUID, template_uuid: UUID, user_uuid: UUID
+    ) -> None:
+        """
+        Безвозвратное (hard) удаление шаблона со всеми связанными записями.
+        Доступно только для шаблонов, которые уже находятся в корзине (is_deleted=True).
+        """
+        str_instance = str(instance_uuid)
+        str_template = str(template_uuid)
+
+        # 1. Проверка существования и статуса шаблона
+        try:
+            # Запрашиваем шаблон, ВКЛЮЧАЯ удаленные
+            template = await self.template_repo.get_template_by_uuid(
+                instance_uuid=str_instance,
+                template_uuid=str_template,
+                include_deleted=True,  # <-- Используем новый флаг
+            )
+        except TemplateNotFoundError:
+            # Перехватываем ошибку репозитория и кидаем ошибку домена сервиса
+            raise TemplateNotFoundDomainError(
+                template_uuid=str_template, instance_uuid=str_instance
+            )
+
+        # 2. Защита от случайного удаления "живого" шаблона
+        # Если шаблон не удален мягко (нет ключа is_deleted или он False)
+        if not template.get("is_deleted", False):
+            raise TemplateNotFoundDomainError(
+                template_uuid=str_template, instance_uuid=str_instance
+            )
+
+        # 3. КАСКАДНОЕ УДАЛЕНИЕ ЗАПИСЕЙ
+        # Очищаем физически все records и records_history
+        _ = await self.record_repo.purge_records_by_template(
+            instance_uuid=str_instance, template_uuid=str_template
+        )
+
+        # 4. БЕЗВОЗВРАТНОЕ УДАЛЕНИЕ САМОГО ШАБЛОНА
+        await self.template_repo.purge_template(
+            instance_uuid=str_instance, template_uuid=str_template
+        )

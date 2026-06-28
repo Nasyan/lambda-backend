@@ -2,7 +2,7 @@
 
 from uuid import UUID
 from redisdb.utils import generate_key
-from config import INVITE_PREFIX, USER_INVITE_PREFIX, JOIN_PREFIX
+from config import INVITE_PREFIX, IS_SECURE_COOKIES, USER_INVITE_PREFIX, JOIN_PREFIX
 from typing import Tuple
 from datetime import datetime, timezone, timedelta
 from fastapi import Response
@@ -220,8 +220,10 @@ class AuthService:
             payload = decode_jwt(refresh_token, expected_type="refresh")
             user_uuid = payload.get("sub")
             if user_uuid is None:
+                print("--- REFRESH ERROR: sub is empty ---")  # <--- ЛОГ
                 raise InvalidTokenCredentialsError(reason="Token 'sub' claim is empty")
         except Exception as e:
+            print(f"--- REFRESH JWT DECODE FAILED: {str(e)} ---")
             raise InvalidTokenCredentialsError(reason=f"JWT decode failed: {str(e)}")
 
         stmt = (
@@ -261,13 +263,15 @@ class AuthService:
             }
         )
 
+        # Динамически выставляем флаг secure на основе конфига окружения
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,
+            secure=IS_SECURE_COOKIES,  # <-- Теперь берется из config.py автоматически!
             samesite="lax",
             max_age=30 * 24 * 60 * 60,
+            path="/",
         )
 
         return {"access_token": access_token, "token_type": "bearer"}

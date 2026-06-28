@@ -102,7 +102,9 @@ async def get_current_user(
         )
 
     stmt = (
-        select(Users).options(joinedload(Users.permissions)).where(Users.uuid == uuid)
+        select(Users)
+        .options(joinedload(Users.permissions), joinedload(Users.settings))
+        .where(Users.uuid == uuid)
     )
 
     response = await session.execute(stmt)
@@ -235,11 +237,6 @@ async def get_current_creator(
         raise InstanceAssociationError()
 
     return current_user
-
-
-# =====================================================================
-# 🔥 НОВЫЕ СВЕРХБЫСТРЫЕ МУЛЬТИАРЕНДНЫЕ ЗАВИСИМОСТИ (БЕЗ НАГРУЗКИ НА БД)
-# =====================================================================
 
 
 def get_current_instance_uuid(token: Annotated[str, Depends(oauth2_scheme)]) -> str:

@@ -119,11 +119,12 @@ async def get_template_service(
     mongo_db=Depends(get_mongo_db),
     cache: CacheLayer = Depends(get_template_cache),
 ) -> TemplateService:
-    repository = TemplateRepository(mongo_db)
+    template_repo = TemplateRepository(mongo_db)
     record_repo = RecordRepository(mongo_db)
     schema_migration = SchemaMigrationService(record_repo)
     return TemplateService(
-        repository,
+        record_repo=record_repo,
+        template_repo=template_repo,
         schema_migration=schema_migration,
         cache=cache,
     )

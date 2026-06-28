@@ -1,20 +1,44 @@
 # instance_schema/views.py
-
-"""HTTP-слой выгрузки/загрузки схемы инстанса (задание 4, 2026-06-10)."""
-
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.dependencies import get_current_instance_creator
 from database.db import get_db
 from instance_schema.schemas import ImportReport, ImportRequest, InstanceSchemaBundle
 from instance_schema.service import InstanceSchemaService
-from jsonwebtoken.utils import get_current_user
 from mongo.db import get_mongo_db
-from users.models import Instances, Users
+from users.models import Users, UserRole
+from fastapi import Path
+from jsonwebtoken.utils import get_current_user  # Твоя базовая функция авторизации
+
+
+async def get_current_authorized_schema_user(
+    instance_uuid: UUID = Path(...),
+    current_user: Users = Depends(get_current_user),
+) -> Users:
+    """
+    Проверяет, имеет ли право пользователь управлять схемой инстанса.
+    Доступ разрешен Глобальным Админам ИЛИ Создателю данного конкретного инстанса.
+    """
+    # Условие 1: Это глобальный админ платформы
+    if current_user.role == UserRole.ADMIN:
+        return current_user
+
+    # Условие 2: Это создатель инстанса, и UUID инстанса совпадает с его привязкой
+    if (
+        current_user.role == UserRole.CREATOR
+        and current_user.instance_id == instance_uuid
+    ):
+        return current_user
+
+    # Во всех остальных случаях — от ворот поворот
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have permission to manage this instance schema.",
+    )
+
 
 router = APIRouter(
     prefix="/instances/{instance_uuid}/schema",
@@ -34,39 +58,37 @@ def get_instance_schema_service(
 )
 async def export_instance_schema(
     instance_uuid: UUID,
-    instance: Instances = Depends(get_current_instance_creator),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(get_current_authorized_schema_user),
     service: InstanceSchemaService = Depends(get_instance_schema_service),
 ):
-    """Выгружает ВСЮ конфигурацию инстанса одним JSON: templates, triggers,
-    widgets, policies, notification templates. Records (данные) не входят."""
-    return await service.export_schema(instance.uuid)
+    """
+    Выгружает ВСЮ конфигурацию инстанса одним JSON.
+    Доступно создателю инстанса и системным администраторам.
+    """
+    # Важно: сервис принимает instance_uuid из пути напрямую, так как админ может выгружать любой инстанс
+    return await service.export_schema(instance_uuid)
 
 
 @router.post("/import", response_model=ImportReport)
 async def import_instance_schema(
     instance_uuid: UUID,
     payload: ImportRequest,
-    instance: Instances = Depends(get_current_instance_creator),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(get_current_authorized_schema_user),
     service: InstanceSchemaService = Depends(get_instance_schema_service),
 ):
-    """Загружает bundle конфигурации.
-
-    Режимы: merge (поверх существующего) / replace (снести текущую конфигурацию
-    и загрузить bundle; в ответе previous_schema для отката тем же эндпоинтом).
-    dry_run=true — только проверка целостности + план порядка применения.
-    Невалидный bundle → 422, ничего не применяется.
+    """
+    Загружает bundle конфигурации.
+    Доступно создателю инстанса и системным администраторам.
     """
     report = await service.import_schema(
-        instance_uuid=instance.uuid,
+        instance_uuid=instance_uuid,
         bundle=payload.bundle,
         mode=payload.mode,
         user_uuid=current_user.uuid,
         dry_run=payload.dry_run,
     )
+
     if not report.valid and not report.created:
-        # Валидация не прошла — изменений не было
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=report.model_dump(mode="json"),

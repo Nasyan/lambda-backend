@@ -1,22 +1,16 @@
-# users/models.py
-
+import enum
+import bcrypt
 from typing import Tuple, Optional, List
 from uuid import UUID, uuid4
-import enum
 
-import bcrypt
-from sqlalchemy import ForeignKey, String, Boolean, Enum
+from sqlalchemy import ForeignKey, String, Boolean, Enum, ARRAY, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 
 from database.db import Base
 
-from sqlalchemy import ARRAY  # 🔥 Импортируем поддержку массивов для Postgres
-
 
 class AppTools(str, enum.Enum):
-    """Список всех доступных инструментов (интерфейсов) в системе."""
-
     ALL = "all"
     NOTES = "notes"
     TABLES = "tables"
@@ -31,19 +25,37 @@ class AppTools(str, enum.Enum):
 class UserPermissions(Base):
     __tablename__ = "user_permissions"
 
-    # Используем Shared Primary Key: uuid является и PK, и ссылается на users.uuid
     user_uuid: Mapped[UUID] = mapped_column(
         ForeignKey("users.uuid", ondelete="CASCADE"), primary_key=True
     )
 
-    # Массив разрешенных инструментов. По дефолту пустой список.
-    # Будем хранить строки (значения из AppTools), чтобы база была гибкой.
     allowed_tools: Mapped[List[str]] = mapped_column(
         ARRAY(String(50)), nullable=False, default=["all"]
     )
 
-    # Обратная связь «Один к Одному» с пользователем
     user: Mapped["Users"] = relationship("Users", back_populates="permissions")
+
+
+class UserLanguage(str, enum.Enum):
+    RU = "ru"
+    EN = "en"
+
+
+class UserSettings(Base):
+    __tablename__ = "user_settings"
+
+    user_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("users.uuid", ondelete="CASCADE"), primary_key=True
+    )
+
+    god_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ui_kits: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
+
+    language: Mapped[UserLanguage] = mapped_column(
+        Enum(UserLanguage), nullable=False, default=UserLanguage.RU
+    )
+
+    user: Mapped["Users"] = relationship("Users", back_populates="settings")
 
 
 class UserRole(str, enum.Enum):
@@ -114,7 +126,14 @@ class Users(Base):
     permissions: Mapped[Optional["UserPermissions"]] = relationship(
         "UserPermissions",
         back_populates="user",
-        uselist=False,  # 🔥 ГАРАНТИРУЕТ связь ОДИН-К-ОДНОМУ
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+    settings: Mapped[Optional["UserSettings"]] = relationship(
+        "UserSettings",
+        back_populates="user",
+        uselist=False,
         cascade="all, delete-orphan",
     )
 

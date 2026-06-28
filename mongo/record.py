@@ -545,3 +545,35 @@ class RecordRepository:
         )
 
         return stringify_id(restored_record)
+
+    async def purge_records_by_template(
+        self, instance_uuid: str, template_uuid: str
+    ) -> int:
+        """
+        Каскадное физическое удаление всех записей (и их истории)
+        при жестком удалении шаблона (Force Delete).
+        """
+        query = {
+            "instance_uuid": str(instance_uuid),
+            "template_uuid": str(template_uuid),
+        }
+
+        # 1. Безвозвратно удаляем сами записи
+        records_delete_result = await execute_logged_mongo_call(
+            self.collection,
+            "delete_many",
+            query,
+            lambda: self.collection.delete_many(query),
+            lambda result: result.deleted_count,
+        )
+
+        # 2. Безвозвратно удаляем их историю
+        await execute_logged_mongo_call(
+            self.history_collection,
+            "delete_many",
+            query,
+            lambda: self.history_collection.delete_many(query),
+            lambda result: result.deleted_count,
+        )
+
+        return records_delete_result

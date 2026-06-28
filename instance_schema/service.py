@@ -107,10 +107,18 @@ class InstanceSchemaService:
         self.db = db
         self.mongo_db = mongo_db
         self.template_repo = TemplateRepository(mongo_db)
+
+        # Создаем RecordRepository один раз для переиспользования
+        record_repo = RecordRepository(mongo_db)
+
+        # Инициализируем TemplateService через именованные аргументы
         self.template_service = TemplateService(
-            self.template_repo,
-            schema_migration=SchemaMigrationService(RecordRepository(mongo_db)),
+            template_repo=self.template_repo,
+            record_repo=record_repo,
+            schema_migration=SchemaMigrationService(record_repo),
+            cache=None,  # Передай реальный кэш, если он ожидается, или оставь None
         )
+
         self.trigger_repo = TriggerRepository(db)
         self.trigger_admin = TriggerAdminService(
             db=db,

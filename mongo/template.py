@@ -127,12 +127,18 @@ class TemplateRepository:
             )
 
     async def get_template_by_uuid(
-        self, instance_uuid: str, template_uuid: str
+        self,
+        instance_uuid: str,
+        template_uuid: str,
+        include_deleted: bool = False,  # <-- Добавили флаг
     ) -> Dict[str, Any]:
 
-        query = with_active_filter(
-            {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
-        )
+        base_query = {"_id": str(template_uuid), "instance_uuid": str(instance_uuid)}
+
+        # Если не просят удаленные, фильтруем только активные.
+        # В противном случае ищем по чистому base_query.
+        query = base_query if include_deleted else with_active_filter(base_query)
+
         template = await execute_logged_mongo_call(
             self.collection,
             "find_one",
@@ -140,6 +146,7 @@ class TemplateRepository:
             lambda: self.collection.find_one(query),
             lambda result: 1 if result else 0,
         )
+
         if not template:
             raise TemplateNotFoundError(
                 template_uuid=template_uuid,
@@ -572,3 +579,26 @@ class TemplateRepository:
             )
 
         return normalize_template(restored)
+
+    async def purge_template(self, instance_uuid: str, template_uuid: str) -> None:
+        """Физическое удаление только самого документа шаблона."""
+        query = {
+            "_id": str(template_uuid),
+            "instance_uuid": str(instance_uuid),
+            "is_deleted": True,
+        }
+
+        deleted_count = await execute_logged_mongo_call(
+            self.collection,
+            "delete_one",
+            query,
+            lambda: self.collection.delete_one(query),
+            lambda result: result.deleted_count,  # Возвращает int напрямую
+        )
+
+        if deleted_count == 0:
+            raise TemplateNotFoundError(
+                template_uuid=template_uuid,
+                instance_uuid=instance_uuid,
+                message="Шаблон не найден или еще не помещен в корзину.",
+            )

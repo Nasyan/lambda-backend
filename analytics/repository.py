@@ -1,9 +1,5 @@
 # analytics/repository.py
 
-"""Глупый PG-репозиторий аналитических виджетов (task3, ГЗ-1 Этап 2).
-
-Вынесен из WidgetService: сервис больше не содержит SQL."""
-
 from typing import Optional
 from uuid import UUID
 

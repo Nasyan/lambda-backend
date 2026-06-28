@@ -17,15 +17,29 @@ from redisdb.cache import CacheLayer
 
 from analytics.schemas import WidgetCreateRequest, WidgetResponse, WidgetUpdateRequest
 
-# 🔥 Убедись, что путь импорта соответствует твоей структуре папок
 from analytics.widget import WidgetService
 from users.auth import RequireTool
 
 router = APIRouter(
     prefix="/instances/{instance_uuid}/widgets",
     tags=["Analytics Widgets"],
-    dependencies=[Depends(RequireTool(AppTools.TEMPLATES))],
+    dependencies=[Depends(RequireTool(AppTools.ANALYTICS))],
 )
+
+
+@router.get("", response_model=List[WidgetResponse], status_code=status.HTTP_200_OK)
+async def list_widgets(
+    instance_uuid: UUID,
+    instance: Instances = Depends(get_current_instance_creator),
+    current_user: Users = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает список всех виджетов для дашборда текущего инстанса"""
+    # Используем instance.uuid из зависимости для гарантии изоляции тенанта
+    return await WidgetService.list_widgets(
+        instance_uuid=instance.uuid,
+        db=db,
+    )
 
 
 @router.post("", response_model=WidgetResponse, status_code=status.HTTP_201_CREATED)

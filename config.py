@@ -157,3 +157,5 @@ MONGO_URL = (
 
 # --- MinIO URL Helper ---
 MINIO_ENDPOINT_URL = f"http://{MINIO_HOST}:{MINIO_PORT}"
+
+IS_SECURE_COOKIES = os.getenv("APP_MODE", "").lower() in {"prod", "production"}

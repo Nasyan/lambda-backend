@@ -43,6 +43,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.schema import DropTable
 
+
+from core.services.template import TemplateService
+from mongo.template import TemplateRepository
+from mongo.record import RecordRepository
+from core.services.schema_migration import SchemaMigrationService
+
 from database.db import Base, get_db
 from mongo.db import get_mongo_db
 from main import app
@@ -56,6 +62,7 @@ from uuid import uuid4
 
 from users.models import Users, Instances, UserRole, UserPermissions
 from jsonwebtoken.utils import encode_jwt
+from core.dependencies import get_template_service
 
 fake = Faker()
 
@@ -223,8 +230,24 @@ async def test_client(pg_session_factory, mongo_db, redis_clean):
     async def override_get_mongo_db():
         yield mongo_db
 
+    # 🌟 ИСПРАВЛЕНИЕ: Переопределяем фабрику сервиса, прокидывая все новые зависимости
+    async def override_get_template_service():
+        template_repo = TemplateRepository(mongo_db)
+        record_repo = RecordRepository(mongo_db)
+        schema_migration = SchemaMigrationService(record_repo)
+
+        # Для сквозных e2e тестов кэш можно отключить или передать None,
+        # так как логика проверяется на уровне базы данных.
+        return TemplateService(
+            template_repo=template_repo,
+            record_repo=record_repo,
+            schema_migration=schema_migration,
+            cache=None,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_mongo_db] = override_get_mongo_db
+    app.dependency_overrides[get_template_service] = override_get_template_service
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -251,8 +274,21 @@ async def concurrent_test_client(postgres_engine, mongo_db, redis_clean):
     async def override_get_mongo_db():
         yield mongo_db
 
+    # 🌟 ИСПРАВЛЕНИЕ: Для конкурентного клиента также обновляем фабрику TemplateService
+    async def override_get_template_service():
+        template_repo = TemplateRepository(mongo_db)
+        record_repo = RecordRepository(mongo_db)
+        schema_migration = SchemaMigrationService(record_repo)
+        return TemplateService(
+            template_repo=template_repo,
+            record_repo=record_repo,
+            schema_migration=schema_migration,
+            cache=None,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_mongo_db] = override_get_mongo_db
+    app.dependency_overrides[get_template_service] = override_get_template_service
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -576,3 +612,30 @@ def crm_environment_factory(db_session):
         }
 
     return _setup_env
+
+
+@pytest.fixture
+def template_service_factory(mongo_db):
+    """
+    Фабрика для создания TemplateService с корректными зависимостями.
+    Использование:
+    service = template_service_factory(repo=my_repo, cache=my_cache)
+    """
+
+    def _create_service(repo=None, cache=None, record_repo=None):
+        # Если репозиторий не передан, создаем реальный на базе mongo_db
+        template_repo = repo or TemplateRepository(mongo_db)
+        # Если репозиторий записей не передан, создаем дефолтный
+        record_repo = record_repo or RecordRepository(mongo_db)
+
+        # Мигратор тоже требует репозиторий записей
+        schema_migration = SchemaMigrationService(record_repo)
+
+        return TemplateService(
+            template_repo=template_repo,
+            record_repo=record_repo,
+            schema_migration=schema_migration,
+            cache=cache,
+        )
+
+    return _create_service
