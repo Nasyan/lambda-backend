@@ -15,7 +15,7 @@ router = APIRouter(prefix="/storage", tags=["storage"])
 
 
 @router.post(
-    "/upload-intent/",
+    "/upload-intent",
     response_model=UploadIntentResponse,
     status_code=status.HTTP_200_OK,
     summary="Получить ссылку для загрузки файла",
@@ -40,7 +40,7 @@ async def get_upload_link(
 
 
 @router.get(
-    "/download/",
+    "/download",
     response_model=DownloadResponse,
     summary="Получить временную ссылку на чтение/отображение файла",
 )
@@ -62,7 +62,7 @@ async def get_download_link(
 
 
 @router.delete(
-    "/delete/",
+    "/delete",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Удалить файл из S3 хранилища",
 )

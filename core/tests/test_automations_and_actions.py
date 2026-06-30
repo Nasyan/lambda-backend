@@ -62,7 +62,7 @@ class TestAutomationsAndActions:
             },
         }
         trigger_res = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             headers=headers,
             json=trigger_payload,
         )
@@ -92,7 +92,7 @@ class TestAutomationsAndActions:
         """
         user_uuid, instance_uuid, headers = await create_test_environment()
         target_template = str(uuid.uuid4())
-        url = f"/instances/{instance_uuid}/triggers/"
+        url = f"/instances/{instance_uuid}/triggers"
         dummy_ast = {"type": "literal", "value": True}
 
         # Кейс А: Пропуск обязательных полей event_type и action_name для AUTOMATION триггера
@@ -167,7 +167,7 @@ class TestAutomationsAndActions:
             "action_params": {"required_text": "Тест"},
         }
         trigger_res = await test_client.post(
-            f"{base_url}/triggers/", headers=headers, json=trigger_payload
+            f"{base_url}/triggers", headers=headers, json=trigger_payload
         )
         assert trigger_res.status_code == 201, trigger_res.text
         trigger_id = trigger_res.json().get("id") or trigger_res.json().get("_id")

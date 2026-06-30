@@ -12,7 +12,7 @@ from core.dependencies import get_history_service
 router = APIRouter(prefix="/history", tags=["history"])
 
 
-@router.get("/field/{record_uuid}/{field_name}/", response_model=FieldHistoryResponse)
+@router.get("/field/{record_uuid}/{field_name}", response_model=FieldHistoryResponse)
 async def get_field_history_endpoint(
     record_uuid: UUID,
     field_name: str,
@@ -32,7 +32,7 @@ async def get_field_history_endpoint(
     )
 
 
-@router.get("/record/{record_uuid}/", response_model=FullHistoryResponse)
+@router.get("/record/{record_uuid}", response_model=FullHistoryResponse)
 async def get_full_record_history_endpoint(
     record_uuid: UUID,
     current_user: Users = Depends(get_current_active_user),

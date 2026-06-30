@@ -93,7 +93,7 @@ class TestIdempotentUpdateTriggers:
         orders_id = env["orders_template_uuid"]
 
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=_idempotent_decrement_trigger(orders_id, products_id),
             headers=headers,
         )

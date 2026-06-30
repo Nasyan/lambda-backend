@@ -186,7 +186,7 @@ class TestNotification:
         }
 
         valid_trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=valid_trigger_payload,
             headers=headers,
         )
@@ -219,7 +219,7 @@ class TestNotification:
         }
 
         invalid_trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=invalid_trigger_payload,
             headers=headers,
         )

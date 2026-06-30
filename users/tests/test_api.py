@@ -17,7 +17,7 @@ class TestUsersAuth:
     ):
         """
         Тест полного цикла регистрации CREATOR:
-        1. /register/ -> Создается неактивный юзер, генерируется код в Redis.
+        1. /register -> Создается неактивный юзер, генерируется код в Redis.
         2. /verify-registration/ -> Юзер активируется, данные удаляются из Redis.
         """
         # Мокаем dramatiq-таску отправки писем, чтобы тест не падал на брокере
@@ -46,7 +46,7 @@ class TestUsersAuth:
         )
 
         # 3. Шаг первый: отправка формы регистрации
-        response = await test_client.post("/auth/register/", json=user_data)
+        response = await test_client.post("/auth/register", json=user_data)
 
         assert response.status_code == 201
         json_resp = response.json()
@@ -81,7 +81,7 @@ class TestUsersAuth:
         # 5. Шаг третий: отправляем код на эндпоинт подтверждения
         verify_payload = {"email": email, "code": verification_code}
         verify_response = await test_client.post(
-            "/auth/verify-registration/", json=verify_payload
+            "/auth/verify-registration", json=verify_payload
         )
 
         assert verify_response.status_code == 200
@@ -107,7 +107,7 @@ class TestUsersAuth:
         """
         user_data = user_factory()
 
-        response = await test_client.post("/auth/register/", json=user_data)
+        response = await test_client.post("/auth/register", json=user_data)
 
         assert response.status_code == 403
 
@@ -132,7 +132,7 @@ class TestUsersAuth:
             name=redis_key, value="corrupted_non_uuid_string", ex=3600
         )
 
-        response = await test_client.post("/auth/register/", json=user_data)
+        response = await test_client.post("/auth/register", json=user_data)
 
         assert response.status_code == 500
 
@@ -161,12 +161,12 @@ class TestUsersAuth:
         )
 
         # Регистрируем аккаунт
-        await test_client.post("/auth/register/", json=user_data)
+        await test_client.post("/auth/register", json=user_data)
 
         # Пытаемся отправить заведомо неверный код верификации
         verify_payload = {"email": email, "code": "000000"}  # Неверный код
         response = await test_client.post(
-            "/auth/verify-registration/", json=verify_payload
+            "/auth/verify-registration", json=verify_payload
         )
 
         assert response.status_code == 400
@@ -212,7 +212,7 @@ class TestUsersAuth:
         )
 
         # Шаг 1: Первая регистрация (первая отправка письма)
-        await test_client.post("/auth/register/", json=user_data)
+        await test_client.post("/auth/register", json=user_data)
         assert mock_send_count == 1
 
         # Извлекаем первый сгенерированный код
@@ -224,7 +224,7 @@ class TestUsersAuth:
 
         # Шаг 3: Делаем запрос на повторную отправку
         resend_payload = {"email": email}
-        response = await test_client.post("/auth/resend-code/", json=resend_payload)
+        response = await test_client.post("/auth/resend-code", json=resend_payload)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -260,11 +260,11 @@ class TestUsersAuth:
         )
 
         # Регистрируем первый раз
-        await test_client.post("/auth/register/", json=user_data)
+        await test_client.post("/auth/register", json=user_data)
 
         # Сразу же (без изменения TTL) шлем повторный запрос
         resend_payload = {"email": email}
-        response = await test_client.post("/auth/resend-code/", json=resend_payload)
+        response = await test_client.post("/auth/resend-code", json=resend_payload)
 
         # Ожидаем отлуп по лимиту запросов
         assert response.status_code == 429
@@ -276,7 +276,7 @@ class TestUsersAuth:
         Возвращаем 404 Not Found.
         """
         resend_payload = {"email": "ghost_user_999@example.com"}
-        response = await test_client.post("/auth/resend-code/", json=resend_payload)
+        response = await test_client.post("/auth/resend-code", json=resend_payload)
 
         assert response.status_code == 404
 
@@ -304,7 +304,7 @@ class TestTokenRefreshFlow:
         await self._create_active_user(db_session, email, UserRole.USER)
 
         login_data = {"username": email, "password": "SecurePass123!"}
-        response = await test_client.post("/auth/login/", data=login_data)
+        response = await test_client.post("/auth/login", data=login_data)
 
         assert response.status_code == 200
         assert "access_token" in response.json()
@@ -324,7 +324,7 @@ class TestTokenRefreshFlow:
 
         # 1. Логинимся
         login_data = {"username": email, "password": "SecurePass123!"}
-        login_res = await test_client.post("/auth/login/", data=login_data)
+        login_res = await test_client.post("/auth/login", data=login_data)
         assert login_res.status_code == 200
 
         first_access_token = login_res.json()["access_token"]
@@ -342,7 +342,7 @@ class TestTokenRefreshFlow:
         test_client.cookies.set("refresh_token", refresh_token)
 
         # Делаем запрос без аргумента cookies=...
-        refresh_res = await test_client.post("/auth/refresh/")
+        refresh_res = await test_client.post("/auth/refresh")
 
         assert refresh_res.status_code == 200
 
@@ -360,7 +360,7 @@ class TestTokenRefreshFlow:
         test_client.cookies.clear()
 
         # Не передаем пустой словарь cookies={}, а просто вызываем эндпоинт без кук
-        response = await test_client.post("/auth/refresh/")
+        response = await test_client.post("/auth/refresh")
 
         assert response.status_code == 401
 
@@ -382,7 +382,7 @@ class TestTokenRefreshFlow:
         # Устанавливаем куку напрямую в инстанс клиента
         test_client.cookies.set("refresh_token", fake_cookie_token)
 
-        response = await test_client.post("/auth/refresh/")
+        response = await test_client.post("/auth/refresh")
 
         assert response.status_code == 401
 
@@ -394,7 +394,7 @@ class TestTokenRefreshFlow:
         user = await self._create_active_user(db_session, email, UserRole.USER)
 
         login_data = {"username": email, "password": "SecurePass123!"}
-        await test_client.post("/auth/login/", data=login_data)
+        await test_client.post("/auth/login", data=login_data)
         refresh_token = test_client.cookies.get("refresh_token")
 
         # Баним пользователя в БД
@@ -405,6 +405,6 @@ class TestTokenRefreshFlow:
         # Устанавливаем сохраненный куки-токен напрямую в инстанс клиента
         test_client.cookies.set("refresh_token", refresh_token)
 
-        response = await test_client.post("/auth/refresh/")
+        response = await test_client.post("/auth/refresh")
 
         assert response.status_code == 401

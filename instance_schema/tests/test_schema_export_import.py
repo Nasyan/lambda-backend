@@ -78,7 +78,7 @@ async def _build_loyalty_instance(test_client, instance_uuid, headers):
 
     # T1: заказ создан → upsert клиента (CREATE/UPDATE каскад на Клиентов)
     t1 = await test_client.post(
-        f"{base}/triggers/",
+        f"{base}/triggers",
         headers=headers,
         json={
             "name": "T1 upsert клиента",
@@ -108,7 +108,7 @@ async def _build_loyalty_instance(test_client, instance_uuid, headers):
 
     # T2: клиент обновлён → запись в Награды (зависит от T1: его target = source T2)
     t2 = await test_client.post(
-        f"{base}/triggers/",
+        f"{base}/triggers",
         headers=headers,
         json={
             "name": "T2 награда за повторный заказ",

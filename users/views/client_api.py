@@ -28,7 +28,7 @@ def get_client_auth_service(
     return ClientAuthService(session, redis_service)
 
 
-@router.post("/register/")
+@router.post("/register")
 async def register_client(
     payload: ClientRegisterRequest,
     service: ClientAuthService = Depends(get_client_auth_service),
@@ -37,7 +37,7 @@ async def register_client(
     return {"status": "success", "message": "Verification code sent."}
 
 
-@router.post("/verify/")
+@router.post("/verify")
 async def verify_client(
     payload: VerifyRegistrationRequest,
     service: ClientAuthService = Depends(get_client_auth_service),
@@ -49,7 +49,7 @@ async def verify_client(
     }
 
 
-@router.post("/resend-code/")
+@router.post("/resend-code")
 async def resend_code(
     payload: ResendVerificationCodeRequest,
     service: ClientAuthService = Depends(get_client_auth_service),
@@ -58,7 +58,7 @@ async def resend_code(
     return {"status": "success", "message": "Code resent."}
 
 
-@router.post("/login/")
+@router.post("/login")
 async def login_client(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -67,7 +67,7 @@ async def login_client(
     return await service.authenticate_and_issue_tokens(form_data, response)
 
 
-@router.post("/refresh/")
+@router.post("/refresh")
 async def refresh_client(
     response: Response,
     client_refresh_token: str | None = Cookie(default=None),
@@ -76,7 +76,7 @@ async def refresh_client(
     return await service.refresh_session_tokens(client_refresh_token, response)
 
 
-@router.get("/me/", response_model=ClientProfileResponse)
+@router.get("/me", response_model=ClientProfileResponse)
 async def get_client_profile(current_client: Users = Depends(get_current_client)):
     """
     Получение профиля текущего авторизованного клиента магазина.

@@ -61,7 +61,7 @@ class TestHistoryAPI:
         )
 
         # 3. Делаем GET запрос к нашему новому эндпоинту
-        url = f"/history/field/{record_uuid}/status/"
+        url = f"/history/field/{record_uuid}/status"
         response = await client.get(url)
 
         # 4. Проверяем структуру ответа и сортировку
@@ -120,7 +120,7 @@ class TestHistoryAPI:
         )
 
         # Пытаемся прочитать историю чужого record_uuid через наш аккаунт
-        url = f"/history/field/{secret_record_uuid}/status/"
+        url = f"/history/field/{secret_record_uuid}/status"
         response = await client.get(url)
 
         assert response.status_code == 200
@@ -180,7 +180,7 @@ class TestHistoryAPI:
         )
 
         # 3. Делаем GET-запрос к новому эндпоинту полной истории
-        url = f"/history/record/{record_uuid}/"
+        url = f"/history/record/{record_uuid}"
         response = await client.get(url)
 
         # 4. Проверяем валидность ответа

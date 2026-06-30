@@ -72,7 +72,7 @@ async def auth_client(test_client, db_session, user_factory):
     await db_session.refresh(user)
 
     login_payload = {"username": user.email, "password": password}
-    response = await test_client.post("/auth/login/", data=login_payload)
+    response = await test_client.post("/auth/login", data=login_payload)
     print("\nSTATUS CODE:", response.status_code)
     print("RESPONSE JSON:", response.json())
     token = response.json()["access_token"]

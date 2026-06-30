@@ -91,7 +91,7 @@ async def _create_notification_trigger(
     payload_fields,
 ):
     response = await test_client.post(
-        f"/instances/{instance_uuid}/triggers/",
+        f"/instances/{instance_uuid}/triggers",
         json={
             "name": name,
             "trigger_type": "AUTOMATION",

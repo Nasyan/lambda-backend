@@ -14,7 +14,6 @@ class TestStorageAPI:
         Интеграционный тест полного жизненного цикла файла в S3:
         Использует изолированный minio_client.
         """
-        # Генерируем тестовые UUID контекста таблицы
         instance_uuid = str(uuid.uuid4())
         template_uuid = str(uuid.uuid4())
         filename = "test_avatar.png"
@@ -28,7 +27,7 @@ class TestStorageAPI:
         }
 
         intent_response = await minio_client.post(
-            "/storage/upload-intent/", json=upload_payload
+            "/storage/upload-intent", json=upload_payload
         )
         assert intent_response.status_code == 200
 
@@ -40,7 +39,7 @@ class TestStorageAPI:
         file_path = intent_data["file_path"]
 
         assert (
-            f"instances/{instance_uuid}/templates/{template_uuid}/uploads/" in file_path
+            f"instances/{instance_uuid}/templates/{template_uuid}/uploads" in file_path
         )
 
         # --- ШАГ 2: Имитируем фронтенд (Загружаем файл напрямую в MinIO) ---
@@ -53,8 +52,9 @@ class TestStorageAPI:
             assert minio_put_response.status_code == 200
 
         # --- ШАГ 3: Запрашиваем ссылку на скачивание/рендеринг файла ---
+        # ИСПРАВЛЕНО: убран слэш перед знаком вопроса
         download_response = await minio_client.get(
-            f"/storage/download/?file_path={file_path}"
+            f"/storage/download?file_path={file_path}"
         )
         assert download_response.status_code == 200
 
@@ -68,13 +68,14 @@ class TestStorageAPI:
         # --- ШАГ 4: Удаляем файл из хранилища ---
         delete_payload = {"file_path": file_path}
         delete_response = await minio_client.request(
-            method="DELETE", url="/storage/delete/", json=delete_payload
+            method="DELETE", url="/storage/delete", json=delete_payload
         )
         assert delete_response.status_code == 204
 
         # --- ШАГ 5: Проверяем, что файла больше нет (Должен вернуть 404) ---
+        # ИСПРАВЛЕНО: убран слэш перед знаком вопроса
         gone_response = await minio_client.get(
-            f"/storage/download/?file_path={file_path}"
+            f"/storage/download?file_path={file_path}"
         )
         assert gone_response.status_code == 404
         assert gone_response.json()["error_code"] == "STORAGE_FILE_NOT_FOUND"
@@ -84,7 +85,8 @@ class TestStorageAPI:
         """Проверяем поведение системы при попытке запросить несуществующий файл."""
         fake_path = "instances/fake-inst/templates/fake-tpl/uploads/does-not-exist.png"
 
-        response = await minio_client.get(f"/storage/download/?file_path={fake_path}")
+        # ИСПРАВЛЕНО: убран слэш перед знаком вопроса
+        response = await minio_client.get(f"/storage/download?file_path={fake_path}")
         assert response.status_code == 404
         assert response.json()["error_code"] == "STORAGE_FILE_NOT_FOUND"
 
@@ -94,7 +96,7 @@ class TestStorageAPI:
         fake_path = "instances/fake-inst/templates/fake-tpl/uploads/missing.png"
 
         response = await minio_client.request(
-            method="DELETE", url="/storage/delete/", json={"file_path": fake_path}
+            method="DELETE", url="/storage/delete", json={"file_path": fake_path}
         )
         assert response.status_code == 404
         assert response.json()["error_code"] == "STORAGE_FILE_NOT_FOUND"
@@ -149,7 +151,7 @@ class TestStorageIntegration:
             "template_uuid": template_uuid,
         }
         intent_resp = await minio_client.post(
-            "/storage/upload-intent/", json=intent_payload, headers=auth_headers
+            "/storage/upload-intent", json=intent_payload, headers=auth_headers
         )
         assert intent_resp.status_code == 200
 

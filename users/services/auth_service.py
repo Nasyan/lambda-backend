@@ -268,7 +268,7 @@ class AuthService:
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=IS_SECURE_COOKIES,  # <-- Теперь берется из config.py автоматически!
+            secure=IS_SECURE_COOKIES,
             samesite="lax",
             max_age=30 * 24 * 60 * 60,
             path="/",

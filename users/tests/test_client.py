@@ -20,7 +20,7 @@ class TestClientStorefrontAuth:
     ):
         """
         Тест полного цикла регистрации CLIENT:
-        1. /storefront-auth/register/ -> Создается неактивный CLIENT с привязкой к инстансу.
+        1. /storefront-auth/register -> Создается неактивный CLIENT с привязкой к инстансу.
         2. /storefront-auth/verify/ -> CLIENT активируется, код удаляется из Redis.
         """
         mock_send_called = False
@@ -43,7 +43,7 @@ class TestClientStorefrontAuth:
         email = user_data["email"]
 
         # 3. Шаг первый: Публичная отправка формы регистрации на витрине
-        response = await test_client.post("/storefront-auth/register/", json=user_data)
+        response = await test_client.post("/storefront-auth/register", json=user_data)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -75,7 +75,7 @@ class TestClientStorefrontAuth:
         # 5. Шаг третий: Клиент вводит код верификации с фронтенда магазина
         verify_payload = {"email": email, "code": verification_code}
         verify_response = await test_client.post(
-            "/storefront-auth/verify/", json=verify_payload
+            "/storefront-auth/verify", json=verify_payload
         )
 
         assert verify_response.status_code == 200
@@ -101,7 +101,7 @@ class TestClientStorefrontAuth:
         # Генерируем фейковый случайный UUID инстанса
         user_data["instance_id"] = "00000000-0000-0000-0000-000000000000"
 
-        response = await test_client.post("/storefront-auth/register/", json=user_data)
+        response = await test_client.post("/storefront-auth/register", json=user_data)
 
         assert response.status_code == 404
 
@@ -130,12 +130,12 @@ class TestClientStorefrontAuth:
         user_data["instance_id"] = str(test_instance.uuid)
         email = user_data["email"]
 
-        await test_client.post("/storefront-auth/register/", json=user_data)
+        await test_client.post("/storefront-auth/register", json=user_data)
 
         # Шлем неверный код
         verify_payload = {"email": email, "code": "999999"}
         response = await test_client.post(
-            "/storefront-auth/verify/", json=verify_payload
+            "/storefront-auth/verify", json=verify_payload
         )
 
         assert response.status_code == 400
@@ -161,11 +161,11 @@ class TestClientStorefrontAuth:
         user_data = user_factory()
         user_data["instance_id"] = str(test_instance.uuid)
 
-        await test_client.post("/storefront-auth/register/", json=user_data)
+        await test_client.post("/storefront-auth/register", json=user_data)
 
         # Сразу шлем повторный запрос без ожидания
         response = await test_client.post(
-            "/storefront-auth/resend-code/", json={"email": user_data["email"]}
+            "/storefront-auth/resend-code", json={"email": user_data["email"]}
         )
 
         assert response.status_code == 429
@@ -200,7 +200,7 @@ class TestClientTokenRefreshFlow:
         await self._create_active_client(db_session, email, test_instance)
 
         login_data = {"username": email, "password": "CustomerPass123!"}
-        response = await test_client.post("/storefront-auth/login/", data=login_data)
+        response = await test_client.post("/storefront-auth/login", data=login_data)
 
         assert response.status_code == 200
         assert "access_token" in response.json()
@@ -228,7 +228,7 @@ class TestClientTokenRefreshFlow:
             "username": "crm_manager@example.com",
             "password": "ManagerPass123!",
         }
-        response = await test_client.post("/storefront-auth/login/", data=login_data)
+        response = await test_client.post("/storefront-auth/login", data=login_data)
 
         # Сервис должен отбросить пользователя с ролью USER на клиентском входе
         assert response.status_code == 400
@@ -245,7 +245,7 @@ class TestClientTokenRefreshFlow:
         await self._create_active_client(db_session, email, test_instance)
 
         login_data = {"username": email, "password": "CustomerPass123!"}
-        login_res = await test_client.post("/storefront-auth/login/", data=login_data)
+        login_res = await test_client.post("/storefront-auth/login", data=login_data)
 
         first_access_token = login_res.json()["access_token"]
         client_refresh = test_client.cookies.get("client_refresh_token")
@@ -261,7 +261,7 @@ class TestClientTokenRefreshFlow:
         test_client.cookies.set("client_refresh_token", client_refresh)
 
         # Обновляем сессию через клиентскую ручку без аргумента cookies=...
-        refresh_res = await test_client.post("/storefront-auth/refresh/")
+        refresh_res = await test_client.post("/storefront-auth/refresh")
 
         assert refresh_res.status_code == 200
         assert refresh_res.json()["access_token"] != first_access_token
@@ -281,7 +281,7 @@ class TestClientTokenRefreshFlow:
         client_user = await self._create_active_client(db_session, email, test_instance)
 
         login_data = {"username": email, "password": "CustomerPass123!"}
-        await test_client.post("/storefront-auth/login/", data=login_data)
+        await test_client.post("/storefront-auth/login", data=login_data)
         client_refresh = test_client.cookies.get("client_refresh_token")
 
         # Симулируем бан клиента администратором CRM
@@ -293,7 +293,7 @@ class TestClientTokenRefreshFlow:
         test_client.cookies.set("client_refresh_token", client_refresh)
 
         # Отправляем запрос
-        response = await test_client.post("/storefront-auth/refresh/")
+        response = await test_client.post("/storefront-auth/refresh")
 
         assert response.status_code == 401
 
@@ -339,7 +339,7 @@ class TestClientLifecycle:
         }
 
         reg_response = await test_client.post(
-            "/storefront-auth/register/", json=register_payload
+            "/storefront-auth/register", json=register_payload
         )
         assert reg_response.status_code == 200
         assert reg_response.json()["status"] == "success"
@@ -359,7 +359,7 @@ class TestClientLifecycle:
 
         verify_payload = {"email": email, "code": verification_code}
         verify_response = await test_client.post(
-            "/storefront-auth/verify/", json=verify_payload
+            "/storefront-auth/verify", json=verify_payload
         )
         assert verify_response.status_code == 200
 
@@ -376,7 +376,7 @@ class TestClientLifecycle:
         # Передаем данные формы (OAuth2PasswordRequestForm использует x-www-form-urlencoded)
         login_data = {"username": email, "password": plain_password}
         login_response = await test_client.post(
-            "/storefront-auth/login/", data=login_data
+            "/storefront-auth/login", data=login_data
         )
 
         assert login_response.status_code == 200
@@ -394,9 +394,7 @@ class TestClientLifecycle:
         # Перед отправкой добавляем токен в заголовки авторизации
         headers = {"Authorization": f"Bearer {access_token}"}
 
-        profile_response = await test_client.get(
-            "/storefront-auth/me/", headers=headers
-        )
+        profile_response = await test_client.get("/storefront-auth/me", headers=headers)
 
         assert profile_response.status_code == 200
         profile_data = profile_response.json()
@@ -423,7 +421,7 @@ class TestClientLifecycle:
         # Вариант 1: Запрос вообще без заголовков (Токен отсутствует)
         # ----------------------------------------------------------------
         test_client.headers.clear()
-        response = await test_client.get("/storefront-auth/me/")
+        response = await test_client.get("/storefront-auth/me")
 
         assert response.status_code == 401
 
@@ -439,7 +437,7 @@ class TestClientLifecycle:
         # Вариант 2: Запрос с фейковым/неструктурированным токеном (Токен битый)
         # ----------------------------------------------------------------
         headers = {"Authorization": "Bearer absolute_gibberish_token_value"}
-        response = await test_client.get("/storefront-auth/me/", headers=headers)
+        response = await test_client.get("/storefront-auth/me", headers=headers)
 
         assert response.status_code == 401
 

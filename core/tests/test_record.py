@@ -46,7 +46,7 @@ class TestSchemaIntegrityProtection:
             "payload_ast": {"type": "field", "value": "status"},
         }
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=trigger_payload,
             headers=headers,
         )
@@ -145,7 +145,7 @@ class TestSchemaIntegrityProtection:
             "payload_ast": {"type": "field", "value": "payment_amount"},
         }
         trigger_create_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=trigger_payload,
             headers=headers,
         )

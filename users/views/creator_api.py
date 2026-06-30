@@ -28,7 +28,7 @@ def get_creator_service(
     return CreatorService(db_session=session, redis_client=redis_client)
 
 
-@router.post("/invite-user/")
+@router.post("/invite-user")
 async def invite_user(
     payload: UserInviteRequest,
     current_user: Users = Depends(get_current_creator),
@@ -45,7 +45,7 @@ async def invite_user(
     )
 
 
-@router.post("/promote-to-creator/")
+@router.post("/promote-to-creator")
 async def promote_to_creator(
     payload: PromoteUserRequest,
     current_user: Users = Depends(get_current_creator),
@@ -62,7 +62,7 @@ async def promote_to_creator(
     )
 
 
-@router.post("/demote-to-user/")
+@router.post("/demote-to-user")
 async def demote_to_user(
     payload: UserRoleChangeRequest,
     current_user: Users = Depends(get_current_creator),
@@ -79,7 +79,7 @@ async def demote_to_user(
     )
 
 
-@router.post("/update-permissions/")
+@router.post("/update-permissions")
 async def update_user_permissions(
     payload: UpdateUserPermissionsRequest,
     current_user: Users = Depends(get_current_creator),
@@ -99,7 +99,7 @@ async def update_user_permissions(
     )
 
 
-@router.post("/deactivate-user/")
+@router.post("/deactivate-user")
 async def deactivate_user(
     payload: UserRoleChangeRequest,
     current_user: Users = Depends(get_current_creator),
@@ -116,7 +116,7 @@ async def deactivate_user(
     )
 
 
-@router.get("/users/", response_model=None)
+@router.get("/users", response_model=None)
 async def list_instance_users(
     current_user: Users = Depends(get_current_creator),
     service: CreatorService = Depends(get_creator_service),

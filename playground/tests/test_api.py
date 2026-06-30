@@ -164,7 +164,7 @@ class TestTriggersPermissions:
 
         # 3. Пытаемся отправить запрос от лица обычного пользователя
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=trigger_payload,
             headers=user_headers,
         )

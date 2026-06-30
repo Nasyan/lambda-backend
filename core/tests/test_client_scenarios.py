@@ -74,7 +74,7 @@ async def create_trigger(
     expected_status: int = 201,
 ) -> dict[str, Any]:
     response = await test_client.post(
-        f"/instances/{instance_uuid}/triggers/",
+        f"/instances/{instance_uuid}/triggers",
         headers=headers,
         json=payload,
     )

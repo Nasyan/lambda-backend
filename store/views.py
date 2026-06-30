@@ -39,9 +39,7 @@ async def get_client_schema(
     return StorefrontSchemaResponse(template_name=template_name, fields=schema_dict)
 
 
-@router.get(
-    "/records", response_model=StorefrontPaginatedRecordsResponse
-)  # 🔥 Поменяли схему ответа
+@router.get("/records", response_model=StorefrontPaginatedRecordsResponse)
 async def search_records(
     request: Request,
     template_name: str,
@@ -57,12 +55,10 @@ async def search_records(
     """
     filters = parse_query_filters(request)
 
-    # 🔥 Распаковываем кортеж из сервиса
     records_list, total_count = await sf_service.get_records(
         instance_uuid, template_name, filters, limit, offset
     )
 
-    # 🔥 Возвращаем стандартизированный пагинированный объект
     return {
         "total": total_count,
         "limit": limit,

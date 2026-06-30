@@ -51,6 +51,7 @@ from triggers.exceptions.action import (
 from middleware.schemas import ListParameters
 
 from engine.exceptions.evaluator import FormulaEvaluationError
+from instance_access.dependencies import RequireTriggerPermission
 
 router = APIRouter(
     prefix="/instances/{instance_uuid}/triggers",
@@ -96,7 +97,12 @@ def get_trigger_admin_service(
     )
 
 
-@router.post("/", response_model=TriggerResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=TriggerResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RequireTriggerPermission("allow_post"))],
+)
 async def create_trigger(
     instance_uuid: UUID,
     payload: TriggerCreate,
@@ -112,7 +118,11 @@ async def create_trigger(
     )
 
 
-@router.patch("/{trigger_uuid}", response_model=TriggerResponse)
+@router.patch(
+    "/{trigger_uuid}",
+    response_model=TriggerResponse,
+    dependencies=[Depends(RequireTriggerPermission("allow_put"))],
+)
 async def update_trigger(
     instance_uuid: UUID,
     trigger_uuid: UUID,
@@ -130,7 +140,11 @@ async def update_trigger(
     )
 
 
-@router.get("/", response_model=List[TriggerResponse])
+@router.get(
+    "",
+    response_model=List[TriggerResponse],
+    dependencies=[Depends(RequireTriggerPermission("allow_get"))],
+)
 async def get_triggers(
     instance_uuid: UUID,
     params: ListParameters = Depends(),  # <-- Внедряем контракт параметров!
@@ -142,7 +156,11 @@ async def get_triggers(
     return await admin_service.list_triggers(instance_uuid, params)
 
 
-@router.delete("/{trigger_uuid}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{trigger_uuid}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(RequireTriggerPermission("allow_gelete"))],
+)
 async def delete_trigger(
     instance_uuid: UUID,
     trigger_uuid: UUID,
@@ -158,7 +176,10 @@ async def delete_trigger(
     )
 
 
-@router.post("/{trigger_uuid}/evaluate")
+@router.post(
+    "/{trigger_uuid}/evaluate",
+    dependencies=[Depends(RequireTriggerPermission("allow_post"))],
+)
 async def evaluate_trigger_live(
     instance_uuid: UUID,
     trigger_uuid: UUID,
@@ -184,7 +205,10 @@ async def evaluate_trigger_live(
         raise FormulaEvaluationError(f"Ошибка рантайма формулы: {str(e)}")
 
 
-@router.post("/{trigger_uuid}/execute")
+@router.post(
+    "/{trigger_uuid}/execute",
+    dependencies=[Depends(RequireTriggerPermission("allow_post"))],
+)
 async def execute_trigger_action(
     instance_uuid: UUID,
     trigger_uuid: UUID,
@@ -226,3 +250,27 @@ async def execute_trigger_action(
         raise AutomationExecutionError(
             detail=(f"Ошибка выполнения действия автоматизации: {str(e)}")
         )
+
+
+@router.get(
+    "/{trigger_uuid}",
+    response_model=TriggerResponse,
+    dependencies=[Depends(RequireTriggerPermission("allow_get"))],
+)
+async def get_trigger(
+    instance_uuid: UUID,
+    trigger_uuid: UUID,
+    current_user: Users = Depends(get_current_active_user),
+    admin_service: TriggerAdminService = Depends(get_trigger_admin_service),
+):
+    """
+    Получение конфигурации конкретного триггера по его UUID.
+    Используется фронтендом для инициализации формы редактирования.
+    """
+    # Валидируем права Креатора и проверяем принадлежность к инстансу
+    verify_creator_and_instance(instance_uuid, current_user)
+
+    # Запрашиваем триггер через доменный сервис
+    return await admin_service.get_trigger_or_raise(
+        instance_uuid=instance_uuid, trigger_uuid=trigger_uuid
+    )

@@ -123,7 +123,7 @@ class TestTriggersAndAggregations:
             "target_template_uuid": order_tpl_id,
         }
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             headers=headers,
             json=trigger_payload,
         )
@@ -266,7 +266,7 @@ class TestTriggersAndAggregations:
             "payload_ast": {"type": "field", "value": "order_status"},
         }
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             headers=headers,
             json=trigger_payload,
         )

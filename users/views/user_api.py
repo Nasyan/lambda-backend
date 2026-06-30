@@ -27,7 +27,7 @@ def get_auth_service(
     return AuthService(session, redis_service)
 
 
-@router.post("/register/")
+@router.post("/register")
 async def register_user(
     payload: UserRegisterRequest, auth_service: AuthService = Depends(get_auth_service)
 ):
@@ -42,7 +42,7 @@ async def register_user(
     )
 
 
-@router.post("/verify-registration/")
+@router.post("/verify-registration")
 async def verify_registration(
     payload: VerifyRegistrationRequest,
     auth_service: AuthService = Depends(get_auth_service),
@@ -64,7 +64,7 @@ async def verify_registration(
     )
 
 
-@router.post("/resend-code/")
+@router.post("/resend-code")
 async def resend_verification_code(
     payload: ResendVerificationCodeRequest,
     auth_service: AuthService = Depends(get_auth_service),
@@ -80,7 +80,7 @@ async def resend_verification_code(
     )
 
 
-@router.post("/login/")
+@router.post("/login")
 async def login_user(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -90,7 +90,7 @@ async def login_user(
     return await auth_service.authenticate_and_issue_tokens(form_data, response)
 
 
-@router.post("/refresh/")
+@router.post("/refresh")
 async def refresh_tokens(
     response: Response,
     refresh_token: str | None = Cookie(default=None),

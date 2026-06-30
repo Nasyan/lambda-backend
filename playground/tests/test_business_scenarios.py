@@ -694,7 +694,7 @@ class TestConcurrentStockDecrement:
         trigger_payload = _stock_decrement_trigger(orders_id, products_id)
         # Схема заказов в этом сценарии компактнее — подгоняем условие под неё
         trigger_resp = await client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=trigger_payload,
             headers=headers,
         )

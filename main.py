@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     mongo_manager.close()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, redirect_slashes=False)
 
 app.add_middleware(StructuredLoggingMiddleware)
 

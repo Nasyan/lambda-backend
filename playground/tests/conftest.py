@@ -136,7 +136,7 @@ def create_test_trigger():
         }
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=trigger_payload,
             headers=headers,
         )
@@ -354,7 +354,7 @@ async def setup_crm_with_automation(test_client, setup_crm_environment):
 
     trigger_payload = client_upsert_trigger_payload(orders_id, clients_id)
 
-    create_trigger_url = f"/instances/{instance_uuid}/triggers/"
+    create_trigger_url = f"/instances/{instance_uuid}/triggers"
     trigger_resp = await test_client.post(
         create_trigger_url, json=trigger_payload, headers=headers
     )
@@ -379,7 +379,7 @@ async def setup_crm_with_automation_upgrade(test_client, setup_crm_environment_u
 
     trigger_payload = client_upsert_trigger_payload(orders_id, clients_id)
 
-    create_trigger_url = f"/instances/{instance_uuid}/triggers/"
+    create_trigger_url = f"/instances/{instance_uuid}/triggers"
     trigger_resp = await test_client.post(
         create_trigger_url, json=trigger_payload, headers=headers
     )
@@ -471,7 +471,7 @@ async def setup_crm_dynamic_cost_and_trigger(test_client, create_test_environmen
         clients_template_uuid,
     )
     await test_client.post(
-        f"/instances/{instance_uuid}/triggers/", json=trigger_payload, headers=headers
+        f"/instances/{instance_uuid}/triggers", json=trigger_payload, headers=headers
     )
 
     return {
@@ -518,7 +518,7 @@ def trigger_factory():
         expected_status: int = 201,
     ):
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=payload,
             headers=headers,
         )

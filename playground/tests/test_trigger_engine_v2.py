@@ -60,7 +60,7 @@ class TestTriggerEngineV2BusinessCases:
         orders_id = env["orders_template_uuid"]
 
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=_client_upsert_trigger(orders_id, clients_id),
             headers=headers,
         )
@@ -170,7 +170,7 @@ class TestTriggerEngineV2BusinessCases:
             "action_name": "RETURN_TO_CALLER",
         }
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=trigger_payload,
             headers=headers,
         )
@@ -229,7 +229,7 @@ class TestTriggerEngineV2BusinessCases:
             },
         }
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=trigger_payload,
             headers=headers,
         )
@@ -310,7 +310,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "bad bulk payload",
                 "trigger_type": "AUTOMATION",
@@ -363,7 +363,7 @@ class TestTriggerEngineV2Validation:
             },
         }
         first = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 **base_trigger,
                 "name": "A to B",
@@ -378,7 +378,7 @@ class TestTriggerEngineV2Validation:
         assert first.status_code == 201, first.text
 
         second = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 **base_trigger,
                 "name": "B to A",
@@ -407,7 +407,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "bad dml target mismatch",
                 "trigger_type": "AUTOMATION",
@@ -452,7 +452,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "bad condition",
                 "trigger_type": "AUTOMATION",
@@ -480,7 +480,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "server computed return type",
                 "trigger_type": "AUTOMATION",
@@ -509,7 +509,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "boolean field condition",
                 "trigger_type": "AUTOMATION",
@@ -536,7 +536,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "regex condition",
                 "trigger_type": "AUTOMATION",
@@ -568,7 +568,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "bad list comparison",
                 "trigger_type": "AUTOMATION",
@@ -604,7 +604,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         response = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "malformed ast",
                 "trigger_type": "AUTOMATION",
@@ -671,14 +671,14 @@ class TestTriggerEngineV2Validation:
             }
 
         first = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=dml_trigger(a_id, b_id, "A to B"),
             headers=headers,
         )
         assert first.status_code == 201, first.text
 
         second = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json=dml_trigger(b_id, c_id, "B to C"),
             headers=headers,
         )
@@ -709,7 +709,7 @@ class TestTriggerEngineV2Validation:
         products_id = env["products_template_uuid"]
 
         trigger_resp = await test_client.post(
-            f"/instances/{instance_uuid}/triggers/",
+            f"/instances/{instance_uuid}/triggers",
             json={
                 "name": "legacy input evaluate",
                 "trigger_type": "LIVE_EVAL",

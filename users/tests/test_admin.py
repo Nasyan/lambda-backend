@@ -45,7 +45,7 @@ class TestAdminAuthAndManagement:
         await init_admin(db_session)
 
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        response = await test_client.post("/admin/login/", data=login_data)
+        response = await test_client.post("/admin/login", data=login_data)
 
         assert response.status_code == 200
         json_data = response.json()
@@ -57,7 +57,7 @@ class TestAdminAuthAndManagement:
         await init_admin(db_session)
 
         login_data = {"username": SENDER_EMAIL, "password": "wrong_password_123"}
-        response = await test_client.post("/admin/login/", data=login_data)
+        response = await test_client.post("/admin/login", data=login_data)
 
         assert response.status_code == 401
 
@@ -65,13 +65,13 @@ class TestAdminAuthAndManagement:
         """Тест успешного создания нового инстанса администратором."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
 
         instance_payload = {"title": "Overwatch Design Studio"}
-        response = await test_client.post("/admin/instances/", json=instance_payload)
+        response = await test_client.post("/admin/instances", json=instance_payload)
 
         assert response.status_code == 201
         json_data = response.json()
@@ -83,7 +83,7 @@ class TestAdminAuthAndManagement:
         """Проверка, что нельзя создать инстанс с уже существующим названием."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -91,11 +91,11 @@ class TestAdminAuthAndManagement:
         instance_payload = {"title": "Unique Studio"}
 
         # Первая отправка — успех
-        res1 = await test_client.post("/admin/instances/", json=instance_payload)
+        res1 = await test_client.post("/admin/instances", json=instance_payload)
         assert res1.status_code == 201
 
         # Вторая отправка — конфликт названий
-        res2 = await test_client.post("/admin/instances/", json=instance_payload)
+        res2 = await test_client.post("/admin/instances", json=instance_payload)
         assert res2.status_code == 400
 
     async def test_invite_creator_success_flow(
@@ -108,13 +108,13 @@ class TestAdminAuthAndManagement:
         # 1. Создаем админа и логинимся
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         token = login_res.json()["access_token"]
         test_client.headers["Authorization"] = f"Bearer {token}"
 
         # 2. Сначала генерируем инстанс, куда будем приглашать креатора
         instance_res = await test_client.post(
-            "/admin/instances/", json={"title": "Pravaon Studio"}
+            "/admin/instances", json={"title": "Pravaon Studio"}
         )
         instance_id = instance_res.json()["uuid"]
 
@@ -122,7 +122,7 @@ class TestAdminAuthAndManagement:
         target_email = "new_creator_studio@gmail.com"
         invite_payload = {"email": target_email, "instance_id": instance_id}
 
-        response = await test_client.post("/admin/invite-creator/", json=invite_payload)
+        response = await test_client.post("/admin/invite-creator", json=invite_payload)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -142,7 +142,7 @@ class TestAdminAuthAndManagement:
         """Система должна возвращать 404, если указан UUID несуществующего инстанса."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -152,7 +152,7 @@ class TestAdminAuthAndManagement:
             "email": "ghost_creator@example.com",
             "instance_id": str(uuid4()),
         }
-        response = await test_client.post("/admin/invite-creator/", json=invite_payload)
+        response = await test_client.post("/admin/invite-creator", json=invite_payload)
 
         assert response.status_code == 404
 
@@ -161,7 +161,7 @@ class TestAdminAuthAndManagement:
         test_client.headers.clear()
 
         invite_payload = {"email": "someone@example.com", "instance_id": str(uuid4())}
-        response = await test_client.post("/admin/invite-creator/", json=invite_payload)
+        response = await test_client.post("/admin/invite-creator", json=invite_payload)
 
         assert response.status_code in [401, 403]
 
@@ -169,19 +169,19 @@ class TestAdminAuthAndManagement:
         """Система не должна разрешать инвайт, если email уже занят в PostgreSQL."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
 
         instance_res = await test_client.post(
-            "/admin/instances/", json={"title": "Temp Studio"}
+            "/admin/instances", json={"title": "Temp Studio"}
         )
         instance_id = instance_res.json()["uuid"]
 
         # Пытаемся выслать инвайт на почту самого админа (она уже есть в базе)
         invite_payload = {"email": SENDER_EMAIL, "instance_id": instance_id}
-        response = await test_client.post("/admin/invite-creator/", json=invite_payload)
+        response = await test_client.post("/admin/invite-creator", json=invite_payload)
 
         assert response.status_code == 400
 
@@ -207,7 +207,7 @@ class TestAdminAuthAndManagement:
         # 1. Авторизуемся под админом
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -224,7 +224,7 @@ class TestAdminAuthAndManagement:
         )
 
         # 3. Запрашиваем список
-        response = await test_client.get("/admin/creators/")
+        response = await test_client.get("/admin/creators")
 
         assert response.status_code == 200
         json_data = response.json()
@@ -239,7 +239,7 @@ class TestAdminAuthAndManagement:
         """Позитивный сценарий: Получение детальной информации о Creator по UUID."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -260,7 +260,7 @@ class TestAdminAuthAndManagement:
         """Негативный сценарий: Попытка получить несуществующего Creator."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -274,7 +274,7 @@ class TestAdminAuthAndManagement:
         """Негативный сценарий: Попытка запросить пользователя, у которого роль не CREATOR."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -291,7 +291,7 @@ class TestAdminAuthAndManagement:
         """Позитивный сценарий: Успешная деактивация активного аккаунта Creator."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -313,7 +313,7 @@ class TestAdminAuthAndManagement:
         """Негативный сценарий: Попытка деактивировать уже забаненного/неактивного Creator."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -334,7 +334,7 @@ class TestAdminAuthAndManagement:
         """Негативный сценарий: Защита от деактивации пользователей с другими ролями (например, Admin)."""
         await init_admin(db_session)
         login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
-        login_res = await test_client.post("/admin/login/", data=login_data)
+        login_res = await test_client.post("/admin/login", data=login_data)
         test_client.headers["Authorization"] = (
             f"Bearer {login_res.json()['access_token']}"
         )
@@ -349,3 +349,102 @@ class TestAdminAuthAndManagement:
         )
 
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestAdminInstanceTriggersManagement:
+
+    async def _setup_admin_auth(self, test_client, db_session) -> str:
+        """Вспомогательный метод: авторизация админа и создание тестового инстанса."""
+        await init_admin(db_session)
+        login_data = {"username": SENDER_EMAIL, "password": ADMIN_PASSWORD}
+        login_res = await test_client.post("/admin/login", data=login_data)
+        token = login_res.json()["access_token"]
+        test_client.headers["Authorization"] = f"Bearer {token}"
+
+        instance_res = await test_client.post(
+            "/admin/instances", json={"title": "Triggers Test Studio"}
+        )
+        return instance_res.json()["uuid"]
+
+    async def test_get_triggers_config_returns_defaults(self, test_client, db_session):
+        """Проверяет GET: автоматическое создание и возврат дефолтной схемы триггеров."""
+        instance_id = await self._setup_admin_auth(test_client, db_session)
+
+        response = await test_client.get(
+            f"/admin/instances/{instance_id}/tools/triggers"
+        )
+        assert response.status_code == 200
+
+        json_data = response.json()
+        assert "enabled" in json_data
+        assert isinstance(json_data["enabled"], bool)
+
+    async def test_update_full_triggers_config_success(self, test_client, db_session):
+        """Проверяет PUT: полное обновление конфигурации триггеров."""
+        instance_id = await self._setup_admin_auth(test_client, db_session)
+
+        payload = {
+            "enabled": True,
+            "allow_get": True,
+            "allow_post": False,
+            "allow_put": True,
+            "allow_delete": False,
+            "allow_cron": True,
+        }
+        response = await test_client.put(
+            f"/admin/instances/{instance_id}/tools/triggers", json=payload
+        )
+        assert response.status_code == 200
+
+        json_data = response.json()
+        assert json_data["enabled"] is True
+        assert json_data["allow_post"] is False
+        assert json_data["allow_put"] is True
+
+    async def test_patch_triggers_config_success(self, test_client, db_session):
+        """Проверяет PATCH: частичное изменение только выбранных ключей."""
+        instance_id = await self._setup_admin_auth(test_client, db_session)
+
+        # Сначала задаем базовое состояние
+        await test_client.put(
+            f"/admin/instances/{instance_id}/tools/triggers",
+            json={
+                "enabled": True,
+                "allow_get": True,
+                "allow_post": True,
+                "allow_put": True,
+                "allow_delete": True,
+            },
+        )
+
+        # Патчим только два поля
+        patch_payload = {"enabled": False, "allow_put": False}
+        response = await test_client.patch(
+            f"/admin/instances/{instance_id}/tools/triggers", json=patch_payload
+        )
+        assert response.status_code == 200
+
+        json_data = response.json()
+        assert json_data["enabled"] is False
+        assert json_data["allow_put"] is False
+        # Проверяем, что остальные поля не затерлись дефолтами, а сохранились из базы (или отработал ваш валидатор сброса)
+        assert "allow_get" in json_data
+
+    async def test_disable_triggers_entirely_success(self, test_client, db_session):
+        """Проверяет POST: быстрое полное отключение инструмента."""
+        instance_id = await self._setup_admin_auth(test_client, db_session)
+
+        response = await test_client.post(
+            f"/admin/instances/{instance_id}/tools/triggers/disable"
+        )
+        assert response.status_code == 200
+        assert response.json()["enabled"] is False
+
+    async def test_triggers_endpoints_forbidden_for_unauthorized(self, test_client):
+        """Проверяет защиту эндпоинтов от неавторизованных запросов."""
+        test_client.headers.clear()
+        fake_id = str(uuid4())
+
+        response = await test_client.get(f"/admin/instances/{fake_id}/tools/triggers")
+        assert response.status_code in [401, 403]

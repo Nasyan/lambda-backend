@@ -32,7 +32,7 @@ class TestCreatorInviteManagement:
         payload = {"email": target_email}
 
         # 2. Делаем запрос
-        response = await client.post("/creator/invite-user/", json=payload)
+        response = await client.post("/creator/invite-user", json=payload)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -84,7 +84,7 @@ class TestCreatorInviteManagement:
 
         # Пробуем выслать инвайт на этот же email
         payload = {"email": already_registered_email}
-        response = await client.post("/creator/invite-user/", json=payload)
+        response = await client.post("/creator/invite-user", json=payload)
 
         assert response.status_code == 400
 
@@ -105,7 +105,7 @@ class TestCreatorInviteManagement:
         await db_session.refresh(creator_user)  # Обновляем состояние объекта
 
         payload = {"email": "random_guy@example.com"}
-        response = await client.post("/creator/invite-user/", json=payload)
+        response = await client.post("/creator/invite-user", json=payload)
 
         assert response.status_code == 400
 
@@ -145,7 +145,7 @@ class TestCreatorInviteManagement:
 
         # 3. Делаем запрос на повышение
         payload = {"user_uuid": str(employee_uuid)}
-        response = await client.post("/creator/promote-to-creator/", json=payload)
+        response = await client.post("/creator/promote-to-creator", json=payload)
 
         # Проверяем ответ эндпоинта
         assert response.status_code == 200
@@ -198,7 +198,7 @@ class TestCreatorInviteManagement:
 
         # 4. Пытаемся повысить чужого юзера
         payload = {"user_uuid": str(foreign_employee.uuid)}
-        response = await client.post("/creator/promote-to-creator/", json=payload)
+        response = await client.post("/creator/promote-to-creator", json=payload)
 
         assert response.status_code == 403
 
@@ -233,7 +233,7 @@ class TestCreatorInviteManagement:
 
         # Пытаемся повторно повысить
         payload = {"user_uuid": str(another_creator.uuid)}
-        response = await client.post("/creator/promote-to-creator/", json=payload)
+        response = await client.post("/creator/promote-to-creator", json=payload)
 
         assert response.status_code == 400
 
@@ -275,7 +275,7 @@ class TestCreatorInviteManagement:
 
         # 3. Делаем запрос на понижение
         payload = {"user_uuid": str(target_uuid)}
-        response = await client.post("/creator/demote-to-user/", json=payload)
+        response = await client.post("/creator/demote-to-user", json=payload)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -319,7 +319,7 @@ class TestCreatorInviteManagement:
 
         # Пытаемся понизить
         payload = {"user_uuid": str(regular_user.uuid)}
-        response = await client.post("/creator/demote-to-user/", json=payload)
+        response = await client.post("/creator/demote-to-user", json=payload)
 
         assert response.status_code == 400
 
@@ -339,7 +339,7 @@ class TestCreatorInviteManagement:
 
         # Креатор передает в payload свой собственный UUID
         payload = {"user_uuid": str(creator_user.uuid)}
-        response = await client.post("/creator/demote-to-user/", json=payload)
+        response = await client.post("/creator/demote-to-user", json=payload)
 
         assert response.status_code == 400
 
@@ -378,7 +378,7 @@ class TestCreatorInviteManagement:
             "user_uuid": str(employee_uuid),
             "allowed_tools": ["notes", "workflow"],
         }
-        response = await client.post("/creator/update-permissions/", json=payload)
+        response = await client.post("/creator/update-permissions", json=payload)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -429,7 +429,7 @@ class TestCreatorInviteManagement:
 
         # Пытаемся поменять ему права
         payload = {"user_uuid": str(foreign_user.uuid), "allowed_tools": ["tables"]}
-        response = await client.post("/creator/update-permissions/", json=payload)
+        response = await client.post("/creator/update-permissions", json=payload)
 
         assert response.status_code == 403
 
@@ -462,7 +462,7 @@ class TestCreatorInviteManagement:
 
         # Отправляем запрос на бан
         payload = {"user_uuid": str(employee.uuid)}
-        response = await client.post("/creator/deactivate-user/", json=payload)
+        response = await client.post("/creator/deactivate-user", json=payload)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -485,7 +485,7 @@ class TestCreatorInviteManagement:
 
         # Передаем свой же UUID
         payload = {"user_uuid": str(creator_user.uuid)}
-        response = await client.post("/creator/deactivate-user/", json=payload)
+        response = await client.post("/creator/deactivate-user", json=payload)
 
         assert response.status_code == 400
 
@@ -524,7 +524,7 @@ class TestCreatorInviteManagement:
 
         # Пытаемся забанить чужого юзера
         payload = {"user_uuid": str(foreign_user.uuid)}
-        response = await client.post("/creator/deactivate-user/", json=payload)
+        response = await client.post("/creator/deactivate-user", json=payload)
 
         assert response.status_code == 403
 
@@ -562,7 +562,7 @@ class TestCreatorInviteManagement:
 
         # 3. Обычный пользователь пытается отправить запрос на деактивацию
         payload = {"user_uuid": str(target_employee.uuid)}
-        response = await client.post("/creator/deactivate-user/", json=payload)
+        response = await client.post("/creator/deactivate-user", json=payload)
 
         # 4. Проверяем, что система жестко отбила запрос по правам доступа
         assert response.status_code == 403

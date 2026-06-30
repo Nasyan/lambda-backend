@@ -65,7 +65,7 @@ async def test_template_soft_delete_restore_api_cascades_records_and_history(
     assert deleted_records_resp.json()["total"] == 1
 
     history_hidden_resp = await test_client.get(
-        f"/history/record/{record_uuid}/",
+        f"/history/record/{record_uuid}",
         headers=headers,
     )
     assert history_hidden_resp.status_code == 200
@@ -86,7 +86,7 @@ async def test_template_soft_delete_restore_api_cascades_records_and_history(
     assert restored_records_resp.json()["total"] == 1
 
     history_restored_resp = await test_client.get(
-        f"/history/record/{record_uuid}/",
+        f"/history/record/{record_uuid}",
         headers=headers,
     )
     assert history_restored_resp.status_code == 200

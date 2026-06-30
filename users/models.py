@@ -82,12 +82,40 @@ def validate_password(password: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
+class InstanceToolsConfig(Base):
+    """
+    Отдельная таблица для хранения настроек и доступов к инструментам инстанса.
+    Сюда сохраняется древовидный JSON, валидируемый Pydantic схемой.
+    """
+
+    __tablename__ = "instance_tools_configs"
+
+    instance_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("instances.uuid", ondelete="CASCADE"), primary_key=True
+    )
+
+    # Здесь хранится сериализованный Pydantic-объект InstanceToolsConfigSchema
+    config_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    instance: Mapped["Instances"] = relationship(
+        "Instances", back_populates="tools_config"
+    )
+
+
 class Instances(Base):
     __tablename__ = "instances"
 
     uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Связь 1:1 со своей конфигурацией инструментов
+    tools_config: Mapped[Optional["InstanceToolsConfig"]] = relationship(
+        "InstanceToolsConfig",
+        back_populates="instance",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     users: Mapped[List["Users"]] = relationship(
         "Users", back_populates="instance", cascade="all, delete-orphan"

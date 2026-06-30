@@ -7,6 +7,11 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from instance_access.schemas import TriggersToolSchema
+from instance_access.service import TriggersConfigManager
+from instance_access.dependencies import get_triggers_manager
+from instance_access.api_schemas import TriggersPatchRequest
+
 from database.db import get_db
 from redisdb.utils import get_redis_db
 from users.models import Users
@@ -31,7 +36,7 @@ def get_admin_service(
     return AdminService(session, redis_client)
 
 
-@router.post("/login/", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse)
 async def admin_login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     service: AdminService = Depends(get_admin_service),
@@ -40,7 +45,7 @@ async def admin_login(
     return TokenResponse(access_token=token, token_type="bearer")
 
 
-@router.post("/invite-creator/")
+@router.post("/invite-creator")
 async def invite_creator(
     payload: CreatorInviteRequest,
     service: AdminService = Depends(get_admin_service),
@@ -57,7 +62,7 @@ async def invite_creator(
 
 
 @router.post(
-    "/instances/", response_model=InstanceResponse, status_code=status.HTTP_201_CREATED
+    "/instances", response_model=InstanceResponse, status_code=status.HTTP_201_CREATED
 )
 async def create_instance(
     payload: InstanceCreateRequest,
@@ -67,7 +72,7 @@ async def create_instance(
     return await service.create_instance(payload.title)
 
 
-@router.get("/instances/", response_model=List[InstanceResponse])
+@router.get("/instances", response_model=List[InstanceResponse])
 async def list_instances(
     service: AdminService = Depends(get_admin_service),
     current_user: Users = Depends(get_current_admin),
@@ -75,7 +80,7 @@ async def list_instances(
     return await service.list_all_instances()
 
 
-@router.get("/creators/", response_model=List[CreatorResponse])
+@router.get("/creators", response_model=List[CreatorResponse])
 async def list_creators(
     service: AdminService = Depends(get_admin_service),
     current_user: Users = Depends(get_current_admin),
@@ -101,7 +106,7 @@ async def deactivate_creator(
     return await service.deactivate_creator(creator_uuid)
 
 
-@router.delete("/users/{user_uuid}/", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/users/{user_uuid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_uuid: UUID,
     service: AdminService = Depends(get_admin_service),
@@ -113,7 +118,7 @@ async def delete_user(
     await service.delete_user(user_uuid)
 
 
-@router.delete("/instances/{instance_id}/", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/instances/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_instance(
     instance_id: UUID,
     service: AdminService = Depends(get_admin_service),
@@ -123,3 +128,54 @@ async def delete_instance(
     Эндпоинт для полного удаления инстанса компании по его UUID.
     """
     await service.delete_instance(instance_id)
+
+
+@router.get(
+    "/instances/{instance_id}/tools/triggers", response_model=TriggersToolSchema
+)
+async def get_instance_triggers(
+    instance_id: UUID,
+    manager: TriggersConfigManager = Depends(get_triggers_manager),
+    current_user: Users = Depends(get_current_admin),
+):
+    """Посмотреть текущие настройки триггеров для инстанса."""
+    return await manager.get_config(instance_id)
+
+
+@router.put(
+    "/instances/{instance_id}/tools/triggers", response_model=TriggersToolSchema
+)
+async def update_instance_triggers(
+    instance_id: UUID,
+    payload: TriggersToolSchema,
+    manager: TriggersConfigManager = Depends(get_triggers_manager),
+    current_user: Users = Depends(get_current_admin),
+):
+    """Полностью перезаписать конфигурацию триггеров (сработает валидатор зависимостей)."""
+    return await manager.update_full_config(instance_id, payload)
+
+
+@router.patch(
+    "/instances/{instance_id}/tools/triggers", response_model=TriggersToolSchema
+)
+async def patch_instance_triggers(
+    instance_id: UUID,
+    payload: TriggersPatchRequest,
+    manager: TriggersConfigManager = Depends(get_triggers_manager),
+    current_user: Users = Depends(get_current_admin),
+):
+    """Частично обновить только переданные ключи триггеров."""
+    update_data = payload.model_dump(exclude_unset=True)
+    return await manager.patch_config(instance_id, **update_data)
+
+
+@router.post(
+    "/instances/{instance_id}/tools/triggers/disable", response_model=TriggersToolSchema
+)
+async def disable_instance_triggers(
+    instance_id: UUID,
+    manager: TriggersConfigManager = Depends(get_triggers_manager),
+    current_user: Users = Depends(get_current_admin),
+):
+    """Полностью выключить инструмент 'Триггеры' одной кнопкой."""
+    return await manager.disable_triggers_entirely(instance_id)

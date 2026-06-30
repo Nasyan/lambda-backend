@@ -58,7 +58,7 @@ class TestRecordLifecycleHistory:
         assert patch2.json()["version"] == 3
 
         history = await test_client.get(
-            f"/history/record/{record_uuid}/", headers=headers
+            f"/history/record/{record_uuid}", headers=headers
         )
         assert history.status_code == 200, history.text
         items = history.json()["history"]
@@ -88,7 +88,7 @@ class TestRecordLifecycleHistory:
         )
 
         resp = await test_client.get(
-            f"/history/field/{record_uuid}/status/", headers=headers
+            f"/history/field/{record_uuid}/status", headers=headers
         )
         assert resp.status_code == 200, resp.text
         items = resp.json()["history"]
@@ -129,7 +129,7 @@ class TestRecordLifecycleHistory:
 
         # Пока запись удалена: старые снимки скрыты, виден только маркер удаления
         history_deleted = await test_client.get(
-            f"/history/record/{record_uuid}/", headers=headers
+            f"/history/record/{record_uuid}", headers=headers
         )
         items = history_deleted.json()["history"]
         assert [item["version"] for item in items] == [3]
@@ -144,7 +144,7 @@ class TestRecordLifecycleHistory:
         # После восстановления видна ПОЛНАЯ хронология: v1, v2, маркер удаления v3,
         # маркер восстановления v4
         history_full = await test_client.get(
-            f"/history/record/{record_uuid}/", headers=headers
+            f"/history/record/{record_uuid}", headers=headers
         )
         items = history_full.json()["history"]
         assert [item["version"] for item in items] == [4, 3, 2, 1]
@@ -212,7 +212,7 @@ class TestAutomationDMLHistory:
             },
         }
         trig = await test_client.post(
-            f"{base}/triggers/", headers=headers, json=trigger_payload
+            f"{base}/triggers", headers=headers, json=trigger_payload
         )
         assert trig.status_code == 201, trig.text
 
@@ -236,7 +236,7 @@ class TestAutomationDMLHistory:
         assert client_record["updated_by"] == "system_automation"
 
         history = await test_client.get(
-            f"/history/record/{client_record['_id']}/", headers=headers
+            f"/history/record/{client_record['_id']}", headers=headers
         )
         assert history.status_code == 200, history.text
         items = history.json()["history"]
