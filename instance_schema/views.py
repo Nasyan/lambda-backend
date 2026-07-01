@@ -88,9 +88,12 @@ async def import_instance_schema(
         dry_run=payload.dry_run,
     )
 
-    if not report.valid and not report.created:
+    if not report.valid:
+        status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        if any(issue.object_type == "merge_conflict" for issue in report.errors):
+            status_code = status.HTTP_409_CONFLICT
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status_code,
             detail=report.model_dump(mode="json"),
         )
     return report

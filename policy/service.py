@@ -41,7 +41,7 @@ class PolicyAdminService:
         )
 
     async def create_policy(
-        self, instance_uuid: UUID, payload: PolicyCreate
+        self, instance_uuid: UUID, payload: PolicyCreate, commit: bool = True
     ) -> StorefrontPolicies:
         # 1. Защита связности: Проверяем, существует ли шаблон и валидируем переданные поля
         schema = await self._get_template_schema_by_name(
@@ -73,8 +73,11 @@ class PolicyAdminService:
             defaults=payload.defaults,
         )
         self.repo.add(policy)
-        await self.db.commit()
-        await self.db.refresh(policy)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(policy)
+        else:
+            await self.db.flush()
         return policy
 
     async def get_policies_list(self, instance_uuid: UUID) -> List[StorefrontPolicies]:

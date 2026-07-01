@@ -3,6 +3,7 @@ from instance_schema.schemas import (
     ImportReport,
     ImportRequest,
     InstanceSchemaBundle,
+    UnresolvedOp,
 )
 from instance_schema.service import InstanceSchemaService
 
@@ -12,4 +13,5 @@ __all__ = [
     "ImportRequest",
     "InstanceSchemaBundle",
     "InstanceSchemaService",
+    "UnresolvedOp",
 ]

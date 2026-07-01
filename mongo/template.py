@@ -78,7 +78,12 @@ class TemplateRepository:
         return template
 
     async def create_template(
-        self, instance_uuid: str, name: str, schema: Dict[str, Any], user_uuid: str
+        self,
+        instance_uuid: str,
+        name: str,
+        schema: Dict[str, Any],
+        user_uuid: str,
+        template_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Вставка шаблона с последним рубежом валидации схемы."""
         _validate_template_schema(schema)
@@ -89,6 +94,8 @@ class TemplateRepository:
             schema=schema,
             user_uuid=user_uuid,
         )
+        if template_uuid is not None:
+            template_document["_id"] = str(template_uuid)
 
         result = await execute_logged_mongo_call(
             self.collection,

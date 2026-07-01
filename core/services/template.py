@@ -83,6 +83,7 @@ class TemplateService:
         name: str,
         schema_definition: Dict[str, Any],
         user_uuid: UUID,
+        template_uuid: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         existing_template = await self.template_repo.find_by_name(
             instance_uuid=str(instance_uuid), name=name
@@ -106,6 +107,7 @@ class TemplateService:
             name=name,
             schema=schema_definition,
             user_uuid=str(user_uuid),
+            template_uuid=str(template_uuid) if template_uuid else None,
         )
         await self._invalidate_template_cache(
             str(instance_uuid), created_template.get("_id")

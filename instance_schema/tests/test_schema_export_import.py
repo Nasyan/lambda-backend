@@ -307,7 +307,7 @@ class TestImportValidation:
             headers=headers,
             json={"schema": bundle, "mode": "merge"},
         )
-        assert resp.status_code == 422, resp.text
+        assert resp.status_code == 409, resp.text
         details = resp.json()["detail"]["errors"]
         assert any("уже существует" in issue["detail"] for issue in details)
 

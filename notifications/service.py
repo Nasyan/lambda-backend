@@ -23,6 +23,7 @@ class NotificationTemplateService:
         instance_uuid: UUID,
         payload_data: Dict[str, Any],
         mongo_template_repo: Any,
+        commit: bool = True,
     ) -> UUID:
         """Создает шаблон и валидирует его No-Code плейсхолдеры."""
         new_uuid = uuid.uuid4()
@@ -48,7 +49,10 @@ class NotificationTemplateService:
             recipients_config=payload_data["recipients_config"],
         )
         NotificationTemplateRepository(db).add(template)
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         return new_uuid
 
     @staticmethod

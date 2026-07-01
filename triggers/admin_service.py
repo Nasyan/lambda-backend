@@ -64,7 +64,12 @@ class TriggerAdminService:
         return trigger
 
     async def create_trigger(
-        self, instance_uuid: UUID, payload: Any, user_uuid: UUID
+        self,
+        instance_uuid: UUID,
+        payload: Any,
+        user_uuid: UUID,
+        commit: bool = True,
+        inject_schema: bool = True,
     ) -> Trigger:
         validator = TriggerSchemaValidator()
         trigger_data = payload.model_dump()
@@ -99,7 +104,7 @@ class TriggerAdminService:
         await self.db.flush()
 
         # Инжекция триггера в динамическую схему Mongo
-        if target_field and payload.target_template_uuid:
+        if inject_schema and target_field and payload.target_template_uuid:
             schema_trigger_data = {
                 "trigger_id": str(db_trigger.id),
                 "trigger_type": db_trigger.trigger_type,
@@ -115,9 +120,10 @@ class TriggerAdminService:
                 user_uuid=str(user_uuid),
             )
 
-        await self.db.commit()
-        await self.db.refresh(db_trigger)
-        await self._invalidate_trigger_cache(instance_uuid)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(db_trigger)
+            await self._invalidate_trigger_cache(instance_uuid)
         return db_trigger
 
     async def update_trigger(

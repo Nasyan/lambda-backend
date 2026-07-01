@@ -58,6 +58,7 @@ class WidgetService:
         payload: WidgetCreateRequest,
         db: AsyncSession,
         analytics_cache: Optional[CacheLayer] = None,
+        commit: bool = True,
     ) -> AnalyticsWidget:
         widget = AnalyticsWidget(
             instance_uuid=instance_uuid,
@@ -68,9 +69,12 @@ class WidgetService:
             chart_config=payload.chart_config.model_dump(),
         )
         AnalyticsWidgetRepository(db).add(widget)
-        await db.commit()
-        await db.refresh(widget)
-        await cls._invalidate_widget_cache(instance_uuid, widget.id, analytics_cache)
+        if commit:
+            await db.commit()
+            await db.refresh(widget)
+            await cls._invalidate_widget_cache(instance_uuid, widget.id, analytics_cache)
+        else:
+            await db.flush()
         return widget
 
     @classmethod

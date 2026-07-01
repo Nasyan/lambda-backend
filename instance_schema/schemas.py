@@ -10,7 +10,7 @@ triggers, analytics widgets, storefront policies, notification templates.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -105,6 +105,14 @@ class ImportIssue(BaseModel):
     detail: str
 
 
+class UnresolvedOp(BaseModel):
+    op_id: str
+    obj_type: str
+    obj_name: Optional[str] = None
+    missing: List[Tuple[str, str]] = Field(default_factory=list)
+    reason: str
+
+
 class ImportReport(BaseModel):
     mode: ImportMode
     dry_run: bool
@@ -119,3 +127,5 @@ class ImportReport(BaseModel):
     id_map: Dict[str, str] = Field(default_factory=dict)
     # Полный экспорт состояния ДО replace-импорта (для отката)
     previous_schema: Optional[InstanceSchemaBundle] = None
+    unresolved: List[UnresolvedOp] = Field(default_factory=list)
+    cycles: List[List[str]] = Field(default_factory=list)
